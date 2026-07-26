@@ -5,6 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>RPU SideKick - TDS RPU Reconciliation Tool — Form 138 / 24Q</title>
+  <link rel="icon" type="image/png" href="logo.png">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/papaparse/5.4.1/papaparse.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -426,15 +427,33 @@
       margin: 8px 0 4px;
       font-size: .82rem;
     }
+
     details.howto summary {
-      cursor: pointer; color: var(--accent); font-weight: 600; list-style: none;
+      cursor: pointer;
+      color: var(--accent);
+      font-weight: 600;
+      list-style: none;
     }
-    details.howto summary::-webkit-details-marker { display: none; }
-    details.howto summary::before { content: "▸ "; }
-    details.howto[open] summary::before { content: "▾ "; }
+
+    details.howto summary::-webkit-details-marker {
+      display: none;
+    }
+
+    details.howto summary::before {
+      content: "▸ ";
+    }
+
+    details.howto[open] summary::before {
+      content: "▾ ";
+    }
+
     details.howto .howto-body {
-      background: var(--line-soft); border-radius: 8px; padding: 9px 12px; margin-top: 6px;
-      color: var(--ink); line-height: 1.55;
+      background: var(--line-soft);
+      border-radius: 8px;
+      padding: 9px 12px;
+      margin-top: 6px;
+      color: var(--ink);
+      line-height: 1.55;
     }
   </style>
 </head>
@@ -443,7 +462,10 @@
 
   <header>
     <div class="wrap" style="padding:0;">
-      <h1>TDS RPU Reconciliation Tool</h1>
+      <div style="display:flex; align-items:center; gap:12px;">
+        <img src="logo.png" alt="RPU Sidekick" style="width:40px; height:40px; border-radius:10px;">
+        <h1>TDS RPU Reconciliation Tool</h1>
+      </div>
       <p>Form 138 (24Q) · BIN view + SPARK reconciliation → RPU-ready output, generated locally in your browser</p>
     </div>
   </header>
@@ -458,7 +480,8 @@
       <details class="howto">
         <summary>ഈ ഫയൽ എവിടെ നിന്ന് കിട്ടും?</summary>
         <div class="howto-body">
-          TRACES login ചെയ്ത ശേഷം Menu bar-ലെ <b>Challan Management</b> → <b>Check Challan/BIN Status</b> ക്ലിക്ക് ചെയ്യുക.
+          TRACES login ചെയ്ത ശേഷം Menu bar-ലെ <b>Challan Management</b> → <b>Check Challan/BIN Status</b> ക്ലിക്ക്
+          ചെയ്യുക.
           <b>BIN</b> സെലക്ട് ചെയ്ത് <b>Proceed</b> ചെയ്യുക. അടുത്ത പേജിൽ മാസം (calendar) സെലക്ട് ചെയ്ത്, BIN Status
           dropdown-ൽ <b>Unclaimed</b> എടുത്ത് <b>Proceed</b> ചെയ്താൽ BIN details (തുക ഉൾപ്പെടെ) കാണാം.
         </div>
@@ -642,17 +665,17 @@
     // ============================================================
     // HELPERS
     // ============================================================
-    function el(id) { return document.getElementById(id); }
+    function el(id) {return document.getElementById(id);}
     function setStatus(id, msg, cls) {
       const n = el(id);
       n.textContent = msg;
       n.className = "status-line" + (cls ? " " + cls : "");
     }
-    function pad5(s) { s = String(s); while (s.length < 5) s = "0" + s; return s; }
-    function fmtAmt(n) { return (Math.round(n * 100) / 100).toFixed(2); }
-    function ddmmyyyyFromSlash(s) { return s.split('/').join(''); } // "30/04/2026" -> "30042026"
-    function monthKey(dateSlash) { const p = dateSlash.split('/'); return p[2] + '-' + p[1]; } // YYYY-MM
-    function looksLikePan(v) { return /^[A-Z]{5}[0-9]{4}[A-Z]$/i.test((v || '').trim()); }
+    function pad5(s) {s = String(s); while (s.length < 5) s = "0" + s; return s;}
+    function fmtAmt(n) {return (Math.round(n * 100) / 100).toFixed(2);}
+    function ddmmyyyyFromSlash(s) {return s.split('/').join('');} // "30/04/2026" -> "30042026"
+    function monthKey(dateSlash) {const p = dateSlash.split('/'); return p[2] + '-' + p[1];} // YYYY-MM
+    function looksLikePan(v) {return /^[A-Z]{5}[0-9]{4}[A-Z]$/i.test((v || '').trim());}
     function normalizeYearRange(hyphenated) {
       // People very commonly write financial years as "2026-27" rather than
       // "2026-2027" — both need to end up meaning the same thing. Always
@@ -692,7 +715,7 @@
       // also vary slightly between offices/portal versions. The six fields
       // are consistently in the same column order regardless of the header
       // row's exact text, so we skip the header row and read by position.
-      const parsed = Papa.parse(text, { header: false, skipEmptyLines: true });
+      const parsed = Papa.parse(text, {header: false, skipEmptyLines: true});
       const rows = parsed.data.slice(1); // drop header row
       return rows.map(r => ({
         receipt_no: String(r[0] ?? '').trim(),
@@ -714,9 +737,9 @@
     }
 
     function parseBinXLSXBuffer(buf) {
-      const wb = XLSX.read(buf, { type: 'array', cellDates: false });
+      const wb = XLSX.read(buf, {type: 'array', cellDates: false});
       const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true });
+      const rows = XLSX.utils.sheet_to_json(ws, {header: 1, raw: true});
       const dataRows = rows.slice(1).filter(r => r && r[0] !== undefined && r[0] !== '');
       // Positional: first 6 columns, regardless of (possibly mislabeled) headers.
       return dataRows.map(r => ({
@@ -736,13 +759,13 @@
     // numeric-safe fragments for the amount/date columns (a neighbouring
     // column's stray character can sit right on a column boundary).
     async function parseBinPDFBuffer(buf) {
-      const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+      const pdf = await pdfjsLib.getDocument({data: buf}).promise;
       const N_COLS = 14;
       let allEntries = [];
 
       for (let p = 1; p <= pdf.numPages; p++) {
         const page = await pdf.getPage(p);
-        const viewport = page.getViewport({ scale: 1 });
+        const viewport = page.getViewport({scale: 1});
         const content = await page.getTextContent();
         // Text item transforms are in raw PDF space, which ignores the page's
         // own /Rotate flag — a page rotated 90° has its "reading" axis swapped
@@ -752,7 +775,7 @@
           .filter(it => it.str && it.str.trim() !== '')
           .map(it => {
             const tx = pdfjsLib.Util.transform(viewport.transform, it.transform);
-            return { text: it.str, x0: tx[4], y0: tx[5] };
+            return {text: it.str, x0: tx[4], y0: tx[5]};
           });
         if (words.length === 0) continue;
 
@@ -762,14 +785,14 @@
         for (let i = 0; i < yVals.length - 1; i++) gaps.push(yVals[i + 1] - yVals[i]);
         const ROW_GAP = 13.0;
         let rowBounds = [yVals[0] - 0.5];
-        for (let i = 0; i < gaps.length; i++) { if (gaps[i] > ROW_GAP) rowBounds.push(yVals[i + 1] - 0.5); }
+        for (let i = 0; i < gaps.length; i++) {if (gaps[i] > ROW_GAP) rowBounds.push(yVals[i + 1] - 0.5);}
         rowBounds.push(999999);
 
         const rows = rowBounds.slice(0, -1).map(() => []);
         for (const w of words) {
           const yr = Math.round(w.y0 * 10) / 10;
           for (let i = 0; i < rowBounds.length - 1; i++) {
-            if (yr >= rowBounds[i] && yr < rowBounds[i + 1]) { rows[i].push(w); break; }
+            if (yr >= rowBounds[i] && yr < rowBounds[i + 1]) {rows[i].push(w); break;}
           }
         }
 
@@ -781,7 +804,7 @@
         const separators = xDiffs.slice(0, N_COLS - 1).map(d => d[1]).sort((a, b) => a - b);
         function colIndex(x0) {
           let ci = 0;
-          for (const s of separators) { if (x0 >= s - 0.5) ci++; else break; }
+          for (const s of separators) {if (x0 >= s - 0.5) ci++; else break;}
           return ci;
         }
 
@@ -824,11 +847,11 @@
     // patterns that were validated against real pdftotext output can run
     // unchanged here.
     async function extractLayoutText(buf) {
-      const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+      const pdf = await pdfjsLib.getDocument({data: buf}).promise;
       let fullText = "";
       for (let p = 1; p <= pdf.numPages; p++) {
         const page = await pdf.getPage(p);
-        const viewport = page.getViewport({ scale: 1 });
+        const viewport = page.getViewport({scale: 1});
         const content = await page.getTextContent();
         // See the note in parseBinPDFBuffer above: combine with the viewport
         // transform so rotated pages (this SPARK PDF is rotated 90°) still
@@ -837,9 +860,9 @@
           .filter(it => it.str !== undefined)
           .map(it => {
             const tx = pdfjsLib.Util.transform(viewport.transform, it.transform);
-            return { text: it.str, x: tx[4], y: tx[5] };
+            return {text: it.str, x: tx[4], y: tx[5]};
           });
-        if (items.length === 0) { fullText += "\n\f\n"; continue; }
+        if (items.length === 0) {fullText += "\n\f\n"; continue;}
 
         const yVals = [...new Set(items.map(it => Math.round(it.y * 10) / 10))].sort((a, b) => a - b);
         const LINE_GAP = 4.0;
@@ -853,7 +876,7 @@
         for (const it of items) {
           const yr = Math.round(it.y * 10) / 10;
           for (let i = 0; i < lineBounds.length - 1; i++) {
-            if (yr >= lineBounds[i] && yr < lineBounds[i + 1]) { lines[i].push(it); break; }
+            if (yr >= lineBounds[i] && yr < lineBounds[i + 1]) {lines[i].push(it); break;}
           }
         }
 
@@ -890,7 +913,7 @@
       const m = block.match(re);
       return m ? m[1].trim() : "";
     }
-    function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+    function escapeRe(s) {return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');}
 
     function parseSparkText(text) {
       const tan = (text.match(/Tax Deduction Account No\.\s+(\S+)/) || [, ''])[1];
@@ -953,14 +976,14 @@
         if (m) {
           current = {
             pan: m[3], name: m[4].trim(),
-            entries: [{ date_payment: m[5], taxable: parseFloat(m[6]), tds: parseFloat(m[7]) }]
+            entries: [{date_payment: m[5], taxable: parseFloat(m[6]), tds: parseFloat(m[7])}]
           };
           employees.push(current);
           continue;
         }
         m = line.match(contRe);
         if (m && current) {
-          current.entries.push({ date_payment: m[1], taxable: parseFloat(m[2]), tds: parseFloat(m[3]) });
+          current.entries.push({date_payment: m[1], taxable: parseFloat(m[2]), tds: parseFloat(m[3])});
         }
       }
 
@@ -993,19 +1016,19 @@
       const first = lines[0].split('^');
       if (first[1] === 'FH') {
         const bh = (lines[1] || '').split('^');
-        if (bh[4] === '138') return { variant: '138_fh', bhLine: lines[1] };
-        if (bh[4] === '24Q') return { variant: '24q_fh', bhLine: lines[1] };
+        if (bh[4] === '138') return {variant: '138_fh', bhLine: lines[1]};
+        if (bh[4] === '24Q') return {variant: '24q_fh', bhLine: lines[1]};
         return null;
       }
       if (first[2] === 'BH') {
-        if (first[4] === '138') return { variant: '138_new', bhLine: lines[0] };
-        if (first[4] === '24Q') return { variant: '24q_new', bhLine: lines[0] };
+        if (first[4] === '138') return {variant: '138_new', bhLine: lines[0]};
+        if (first[4] === '24Q') return {variant: '24q_new', bhLine: lines[0]};
         return null;
       }
       return null;
     }
 
-    function pick(fields, idx) { return (fields[idx] || '').trim(); }
+    function pick(fields, idx) {return (fields[idx] || '').trim();}
 
     function extractOldFileFields(bhLine, variant) {
       const f = bhLine.split('^');
@@ -1059,7 +1082,7 @@
       const detected = detectOldFileVariant(text);
       if (!detected) return null;
       const fields = extractOldFileFields(detected.bhLine, detected.variant);
-      return fields ? { variant: detected.variant, fields } : null;
+      return fields ? {variant: detected.variant, fields} : null;
     }
 
 
@@ -1104,7 +1127,7 @@
           warnings.push(`SPARK shows TDS of ${fmtAmt(monthSparkTotal[mk])} for ${mk} but no matching BIN entry was found.`);
         }
       }
-      return { challans: result, warnings };
+      return {challans: result, warnings};
     }
 
     // ============================================================
@@ -1120,7 +1143,7 @@
       const lines = [];
       let seq = 1;
       const regularOrCorrection = d.filed_earlier === 'Yes' ? 'C' : 'R';
-      lines.push(buildRow(18, { 0: seq, 1: 'FH', 2: 'SL1', 3: regularOrCorrection, 4: genDateDdmmyyyy, 5: '1', 6: 'D', 7: d.tan, 8: '1', 9: 'Protean RPU 1.1' }));
+      lines.push(buildRow(18, {0: seq, 1: 'FH', 2: 'SL1', 3: regularOrCorrection, 4: genDateDdmmyyyy, 5: '1', 6: 'D', 7: d.tan, 8: '1', 9: 'Protean RPU 1.1'}));
       seq++;
       const totalTds = challans.reduce((s, c) => s + c.tv_amount, 0);
       lines.push(buildRow(72, {
@@ -1211,7 +1234,7 @@
     // ============================================================
     // UI WIRING
     // ============================================================
-    function enableStep(n) { el('step' + n).classList.remove('disabled'); }
+    function enableStep(n) {el('step' + n).classList.remove('disabled');}
 
     el('f_fy_hyphen').addEventListener('input', () => {
       el('f_ay_hyphen').value = computeAY(el('f_fy_hyphen').value);
@@ -1239,7 +1262,7 @@
         for (const key in result.fields) {
           const val = result.fields[key];
           const target = el('f_' + key);
-          if (val && target) { target.value = val; filled++; }
+          if (val && target) {target.value = val; filled++;}
         }
         if (el('f_resp_same_address').checked) syncRespAddressFromDeductor();
         setStatus('oldFileStatus', `Filled ${filled} field${filled === 1 ? '' : 's'} from this file (${result.variant.replace('_', ' ')} layout). Review below — address sub-fields are best-effort for the older layouts.`, 'ok');
@@ -1303,7 +1326,7 @@
     });
 
     el('skipSpark').addEventListener('click', () => {
-      sparkData = { deductor: {}, employees: [] };
+      sparkData = {deductor: {}, employees: []};
       setStatus('sparkStatus', 'No SPARK PDF — fill in deductor details below and add deductees manually in step 4.', 'ok');
       fillDeductorForm(sparkData.deductor);
       enableStep(3);
@@ -1364,10 +1387,10 @@
     }
 
     function syncRespAddressFromDeductor() {
-      DEDUCTOR_ADDRESS_IDS.forEach((id, i) => { el(RESP_ADDRESS_IDS[i]).value = el(id).value; });
+      DEDUCTOR_ADDRESS_IDS.forEach((id, i) => {el(RESP_ADDRESS_IDS[i]).value = el(id).value;});
     }
     function setRespAddressEditable(editable) {
-      RESP_ADDRESS_IDS.forEach(id => { el(id).disabled = !editable; });
+      RESP_ADDRESS_IDS.forEach(id => {el(id).disabled = !editable;});
     }
 
     function maybeProceed() {
@@ -1407,7 +1430,7 @@
     }
 
     function runReconciliation() {
-      const { challans: rec, warnings } = reconcile(binEntries, sparkData.employees);
+      const {challans: rec, warnings} = reconcile(binEntries, sparkData.employees);
       challans = rec;
       enableStep(4);
 
@@ -1424,10 +1447,10 @@
     }
 
     function blankChallan() {
-      return { receipt_no: '', ddo_serial: '', tv_date_slash: '', tv_date_ddmmyyyy: '', tv_amount: 0, deductees: [] };
+      return {receipt_no: '', ddo_serial: '', tv_date_slash: '', tv_date_ddmmyyyy: '', tv_amount: 0, deductees: []};
     }
     function blankDeductee() {
-      return { pan: '', name: '', taxable: 0, tds: 0 };
+      return {pan: '', name: '', taxable: 0, tds: 0};
     }
 
     function renderChallanTable() {
@@ -1567,7 +1590,7 @@
       // filename has none, silently appending ".txt" to an extension-less
       // name like the Format B file. octet-stream has no implied extension,
       // so the filename downloads exactly as given either way.
-      const blob = new Blob([content], { type: 'application/octet-stream' });
+      const blob = new Blob([content], {type: 'application/octet-stream'});
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url; a.download = filename;
