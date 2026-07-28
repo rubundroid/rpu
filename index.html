@@ -1363,6 +1363,20 @@
       if (parts.length !== 2 || !/^\d{4}$/.test(parts[0]) || !/^\d{4}$/.test(parts[1])) return '';
       return (parseInt(parts[0]) + 1) + '-' + (parseInt(parts[1]) + 1);
     }
+    function currentFYHyphen(date) {
+      // Indian FY runs April-March; before April, we're still in the FY that started the previous calendar year.
+      const year = date.getFullYear();
+      const month = date.getMonth() + 1;
+      const startYear = month >= 4 ? year : year - 1;
+      return `${startYear}-${startYear + 1}`;
+    }
+    function currentQuarterFromDate(date) {
+      const month = date.getMonth() + 1;
+      if (month >= 4 && month <= 6) return 'Q1';
+      if (month >= 7 && month <= 9) return 'Q2';
+      if (month >= 10 && month <= 12) return 'Q3';
+      return 'Q4';
+    }
 
     function fillDeductorForm(dd) {
       el('f_tan').value = dd.tan || '';
@@ -1394,10 +1408,10 @@
       el('f_resp_phone').value = '';
       el('f_resp_email').value = dd.resp_email || '';
 
-      const fyValue = dd.fy_hyphen || '2026-2027';
+      const fyValue = dd.fy_hyphen || currentFYHyphen(new Date());
       el('f_fy_hyphen').value = fyValue;
       el('f_ay_hyphen').value = dd.ay_hyphen || computeAY(fyValue) || '';
-      el('f_quarter').value = dd.quarter || '';
+      el('f_quarter').value = dd.quarter || currentQuarterFromDate(new Date());
       el('f_filed_earlier').value = dd.filed_earlier || 'No';
       el('f_provisional_receipt_no').value = '';
       if (el('f_resp_same_address').checked) syncRespAddressFromDeductor();
