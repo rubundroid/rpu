@@ -483,7 +483,8 @@
           TRACES login ചെയ്ത ശേഷം Menu bar-ലെ <b>Challan Management</b> → <b>Check Challan/BIN Status</b> ക്ലിക്ക്
           ചെയ്യുക.
           <b>BIN</b> സെലക്ട് ചെയ്ത് <b>Proceed</b> ചെയ്യുക. അടുത്ത പേജിൽ മാസം (calendar) സെലക്ട് ചെയ്ത്, BIN Status
-          dropdown-ൽ <b>Unclaimed</b> എടുത്ത് <b>Proceed</b> ചെയ്താൽ BIN details (തുക ഉൾപ്പെടെ) കാണാം.
+          dropdown-ൽ <b>Unclaimed</b> എടുത്ത് <b>Proceed</b> ചെയ്താൽ BIN details (തുക ഉൾപ്പെടെ) കാണാം. —
+          <a href="https://traces.tdscpc.gov.in/" target="_blank" rel="noopener">TRACES ലോഗിൻ</a>
         </div>
       </details>
       <div class="file-row">
@@ -504,7 +505,8 @@
         <div class="howto-body">
           SPARK-ൽ <b>Income Tax → 24Q → Form-24Q</b> ലേക്ക് പോകുക. <b>Quarter</b>, <b>Pay Bill</b> സെലക്ട് ചെയ്ത്
           <b>Prepare Data</b> ക്ലിക്ക് ചെയ്യുക. <b>PDF Annexure 1</b> സെലക്ട് ചെയ്ത് <b>Generate</b> ക്ലിക്ക് ചെയ്താൽ
-          ഈ PDF കിട്ടും.
+          ഈ PDF കിട്ടും. —
+          <a href="https://www.spark.gov.in/webspark/" target="_blank" rel="noopener">SPARK ലോഗിൻ</a>
         </div>
       </details>
       <div class="file-row">
@@ -630,13 +632,19 @@
         <div class="dl-card">
           <h3>Format A — ready to use in FVU</h3>
           <p id="fnameA" class="hint" style="margin:0 0 8px;"></p>
-          <pre id="previewA"></pre>
+          <p class="hint" style="margin:0 0 10px;">
+            എപ്പോഴും <b>latest version File Validation Utility (FVU)</b> എടുത്ത് അതിൽ ഈ ഫയൽ validate ചെയ്യുക —
+            <a href="https://tinpan.proteantech.in/downloads/e-tds/eTDS-download-regular.html#:~:text=File%20Validation%20Utility%20(FVU)" target="_blank" rel="noopener">FVU ഡൗൺലോഡ് പേജ്</a>.
+          </p>
           <button id="dlA">Download .txt</button>
         </div>
         <div class="dl-card">
           <h3>Format B — ready to edit in RPU</h3>
           <p id="fnameB" class="hint" style="margin:0 0 8px;"></p>
-          <pre id="previewB"></pre>
+          <p class="hint" style="margin:0 0 10px;">
+            ഈ ഫയൽ പുതിയ <b>RPU</b> വഴി തുറന്ന് ആവശ്യമെങ്കിൽ എഡിറ്റ് ചെയ്യാം —
+            <a href="https://tinpan.proteantech.in/downloads/e-tds/eTDS-download-regular.html#:~:text=Protean%20Return%20Preparation%20Utility" target="_blank" rel="noopener">RPU ഡൗൺലോഡ് പേജ്</a>.
+          </p>
           <button id="dlB">Download</button>
         </div>
       </div>
@@ -1584,8 +1592,6 @@
 
       el('fnameA').textContent = fnameAFinal;
       el('fnameB').textContent = fnameBFinal;
-      el('previewA').textContent = outA.slice(0, 600) + (outA.length > 600 ? '\n…' : '');
-      el('previewB').textContent = outB.slice(0, 600) + (outB.length > 600 ? '\n…' : '');
 
       el('dlA').onclick = () => downloadText(fnameAFinal, outA);
       el('dlB').onclick = () => downloadText(fnameBFinal, outB);
