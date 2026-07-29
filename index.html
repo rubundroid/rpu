@@ -694,6 +694,22 @@
     function ddmmyyyyFromSlash(s) {return s.split('/').join('');} // "30/04/2026" -> "30042026"
     function monthKey(dateSlash) {const p = dateSlash.split('/'); return p[2] + '-' + p[1];} // YYYY-MM
     function looksLikePan(v) {return /^[A-Z]{5}[0-9]{4}[A-Z]$/i.test((v || '').trim());}
+    function fvuFilename(date) {
+      // FVU max 12 chars including extension, no special characters:
+      // "FVU" + day-of-month mod 10 (1 digit) + hour (2) + second (2) + ".txt" = 12
+      const dayDigit = date.getDate() % 10;
+      const hh = String(date.getHours()).padStart(2, '0');
+      const ss = String(date.getSeconds()).padStart(2, '0');
+      return `FVU${dayDigit}${hh}${ss}.txt`;
+    }
+    function rpuFilename(date) {
+      // "RPU" + 2-digit year + hour + minute + second, no extension, no specials
+      const yy = String(date.getFullYear()).slice(-2);
+      const hh = String(date.getHours()).padStart(2, '0');
+      const mm = String(date.getMinutes()).padStart(2, '0');
+      const ss = String(date.getSeconds()).padStart(2, '0');
+      return `RPU${yy}${hh}${mm}${ss}`;
+    }
     function normalizeYearRange(hyphenated) {
       // People very commonly write financial years as "2026-27" rather than
       // "2026-2027" — both need to end up meaning the same thing. Always
@@ -1616,8 +1632,8 @@
       const outA = genFormatA(d, challans, genDate);
       const outB = genFormatB(d, challans);
 
-      const fnameAFinal = `138R${d.quarter}.txt`;
-      const fnameBFinal = `${d.tan}_138_${d.fy_nosep}_${d.quarter}`;
+      const fnameAFinal = fvuFilename(today);
+      const fnameBFinal = rpuFilename(today);
 
       el('fnameA').textContent = fnameAFinal;
       el('fnameB').textContent = fnameBFinal;
