@@ -694,6 +694,14 @@
     function ddmmyyyyFromSlash(s) {return s.split('/').join('');} // "30/04/2026" -> "30042026"
     function monthKey(dateSlash) {const p = dateSlash.split('/'); return p[2] + '-' + p[1];} // YYYY-MM
     function looksLikePan(v) {return /^[A-Z]{5}[0-9]{4}[A-Z]$/i.test((v || '').trim());}
+    function isNonSalaryEntry(nature) {
+      // BIN exports can include Form 140 (Non-Salary TDS) rows alongside
+      // Form 138 (Salary) ones — this tool only reconciles salary TDS
+      // against SPARK's Annexure I, so Form 140 rows must be excluded
+      // rather than silently matched against the wrong data.
+      const n = (nature || '').toLowerCase();
+      return n.includes('140') || n.includes('non salary') || n.includes('non-salary');
+    }
     function fvuFilename(date) {
       // FVU max 12 chars including extension, no special characters:
       // "FVU" + day-of-month mod 10 (1 digit) + hour (2) + second (2) + ".txt" = 12
@@ -767,6 +775,17 @@
       if (m) return `${m[3]}/${m[2]}/${m[1]}`;
       m = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
       if (m) return raw;
+      // TRACES itself displays dates like "30-Apr-2026" — people copying
+      // straight from that screen (typing challans in manually) need this
+      // to still work, not silently fail to match anything.
+      const MONTHS = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
+      m = raw.match(/^(\d{1,2})[\s\-](\w{3,})[\s\-](\d{4})$/);
+      if (m && MONTHS[m[2].slice(0, 3).toLowerCase()]) {
+        return `${m[1].padStart(2, '0')}/${MONTHS[m[2].slice(0, 3).toLowerCase()]}/${m[3]}`;
+      }
+      // "30-04-2026" (hyphens instead of slashes, numeric month)
+      m = raw.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+      if (m) return `${m[1]}/${m[2]}/${m[3]}`;
       return raw;
     }
 
@@ -1120,7 +1139,7 @@
     }
 
 
-    function reconcile(bin, employees) {
+    function groupSparkByMonth(employees) {
       const monthDeductees = {};   // mk -> [{pan,name,taxable,tds}]
       const monthSparkTotal = {};  // mk -> total
       for (const emp of employees) {
@@ -1134,6 +1153,11 @@
           }
         }
       }
+      return { monthDeductees, monthSparkTotal };
+    }
+
+    function reconcile(bin, employees) {
+      const { monthDeductees, monthSparkTotal } = groupSparkByMonth(employees);
 
       const result = [];
       const warnings = [];
@@ -1162,6 +1186,28 @@
         }
       }
       return {challans: result, warnings};
+    }
+
+    function buildChallansFromSparkOnly(employees) {
+      // When BIN is skipped, there's nothing to reconcile against — but if
+      // SPARK data is already in, we know exactly which months have salary
+      // TDS and for whom. Build one challan per such month, correctly
+      // pre-filled with SPARK's deductees, leaving only the BIN-specific
+      // fields (receipt no., DDO serial, exact TV date) blank for the user
+      // to type in once they have that information.
+      const { monthDeductees, monthSparkTotal } = groupSparkByMonth(employees);
+      const monthKeys = Object.keys(monthSparkTotal).filter(mk => monthSparkTotal[mk] > 0).sort();
+      return monthKeys.map(mk => {
+        const [y, m] = mk.split('-');
+        const lastDay = new Date(parseInt(y), parseInt(m), 0).getDate(); // last day of that month
+        const tv_date_slash = `${String(lastDay).padStart(2, '0')}/${m}/${y}`;
+        const deductees = (monthDeductees[mk] || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+        return {
+          receipt_no: '', ddo_serial: '',
+          tv_date_slash, tv_date_ddmmyyyy: ddmmyyyyFromSlash(tv_date_slash),
+          tv_amount: monthSparkTotal[mk], deductees
+        };
+      });
     }
 
     // ============================================================
@@ -1332,7 +1378,11 @@
           throw new Error('Unsupported file type: ' + ext);
         }
         if (!binEntries.length) throw new Error('No BIN rows recognised in this file.');
-        setStatus('binStatus', `Read ${binEntries.length} transfer voucher${binEntries.length > 1 ? 's' : ''}: ` +
+        const excludedCount = binEntries.filter(b => isNonSalaryEntry(b.nature)).length;
+        binEntries = binEntries.filter(b => !isNonSalaryEntry(b.nature));
+        if (!binEntries.length) throw new Error('Only Form 140 (Non-Salary) rows were found — this tool needs Form 138 (Salary) BIN entries.');
+        const excludedNote = excludedCount ? ` (excluded ${excludedCount} Form 140/Non-Salary row${excludedCount > 1 ? 's' : ''})` : '';
+        setStatus('binStatus', `Read ${binEntries.length} transfer voucher${binEntries.length > 1 ? 's' : ''}${excludedNote}: ` +
           binEntries.map(b => `${b.receipt_no} (₹${fmtAmt(b.tv_amount)}, ${b.tv_date})`).join('; '), 'ok');
         maybeProceed();
       } catch (err) {
@@ -1492,7 +1542,15 @@
     }
 
     function runReconciliation() {
-      const {challans: rec, warnings} = reconcile(binEntries, sparkData.employees);
+      let rec, warnings;
+      if (binEntries.length === 0 && sparkData.employees.length > 0) {
+        // BIN was skipped but SPARK wasn't — pre-build challans from
+        // SPARK's own months instead of leaving the table empty.
+        rec = buildChallansFromSparkOnly(sparkData.employees);
+        warnings = [];
+      } else {
+        ({challans: rec, warnings} = reconcile(binEntries, sparkData.employees));
+      }
       challans = rec;
       enableStep(4);
 
@@ -1500,6 +1558,8 @@
       if (warnings.length) {
         msgBox.innerHTML = '<div class="warn-box"><b>Check these before generating:</b><br>' +
           warnings.map(w => '• ' + w).join('<br>') + '</div>';
+      } else if (binEntries.length === 0 && challans.length) {
+        msgBox.innerHTML = '<div class="ok-box">Built ' + challans.length + ' challan(s) from SPARK\'s months — receipt no., DDO serial and exact TV date still need to be filled in from your BIN data.</div>';
       } else if (challans.length) {
         msgBox.innerHTML = '<div class="ok-box">All BIN transfer vouchers match SPARK\'s Annexure I totals for their month — no mismatches found.</div>';
       } else {
@@ -1548,7 +1608,13 @@
           </tr>`).join('')}
       </table>
       <div class="small-btn-row" style="margin:8px 0 0;">
-        <button type="button" class="link-btn" data-add-deductee="${ci}">+ Add deductee</button>
+        <select class="add-deductee-select" data-ch="${ci}">
+          <option value="">+ Add deductee</option>
+          <option value="__blank__">— blank row (type in manually) —</option>
+          ${(sparkData && sparkData.employees && sparkData.employees.length)
+            ? sparkData.employees.map((emp, ei) => `<option value="${ei}">${emp.pan} — ${sanitizeFreeText(emp.name).toUpperCase()}</option>`).join('')
+            : ''}
+        </select>
       </div>`;
         tblWrap.appendChild(block);
       });
@@ -1567,7 +1633,7 @@
           const ch = challans[inp.dataset.ch];
           if (inp.dataset.f === 'tv_amount') ch.tv_amount = parseFloat(inp.value) || 0;
           else if (inp.dataset.f === 'tv_date_slash') {
-            ch.tv_date_slash = inp.value.trim();
+            ch.tv_date_slash = normalizeDateToSlash(inp.value.trim());
             ch.tv_date_ddmmyyyy = ddmmyyyyFromSlash(ch.tv_date_slash);
           } else ch[inp.dataset.f] = inp.value.trim();
           renderChallanTable();
@@ -1580,9 +1646,22 @@
           renderChallanTable();
         });
       });
-      tblWrap.querySelectorAll('[data-add-deductee]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          challans[btn.dataset.addDeductee].deductees.push(blankDeductee());
+      tblWrap.querySelectorAll('.add-deductee-select').forEach(sel => {
+        sel.addEventListener('change', () => {
+          const ch = challans[sel.dataset.ch];
+          if (sel.value === '__blank__') {
+            ch.deductees.push(blankDeductee());
+          } else if (sel.value !== '') {
+            const emp = sparkData.employees[parseInt(sel.value)];
+            const mk = monthKey(ch.tv_date_slash);
+            const entry = emp.entries.find(e => monthKey(e.date_payment) === mk);
+            ch.deductees.push({
+              pan: emp.pan,
+              name: sanitizeFreeText(emp.name).toUpperCase(),
+              taxable: entry ? entry.taxable : 0,
+              tds: entry ? entry.tds : 0,
+            });
+          }
           renderChallanTable();
         });
       });
