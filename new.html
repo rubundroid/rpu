@@ -692,6 +692,11 @@
     function pad5(s) {s = String(s); while (s.length < 5) s = "0" + s; return s;}
     function fmtAmt(n) {return (Math.round(n * 100) / 100).toFixed(2);}
     function ddmmyyyyFromSlash(s) {return s.split('/').join('');} // "30/04/2026" -> "30042026"
+    function ddmmyyyyToSlash(s) {
+      s = String(s || '').trim();
+      const m = s.match(/^(\d{2})(\d{2})(\d{4})$/);
+      return m ? `${m[1]}/${m[2]}/${m[3]}` : s;
+    } // "30042026" -> "30/04/2026"
     function monthKey(dateSlash) {const p = dateSlash.split('/'); return p[2] + '-' + p[1];} // YYYY-MM
     function looksLikePan(v) {return /^[A-Z]{5}[0-9]{4}[A-Z]$/i.test((v || '').trim());}
     function isNonSalaryEntry(nature) {
@@ -1088,28 +1093,28 @@
       const maps = {
         // Confirmed against real generated output during this project.
         '138_fh': {
-          tan: 12, deductor_pan: 14, deductor_name: 18, road: 21, area: 22, locality_extra: 23, district: 24,
+          tan: 12, deductor_pan: 14, deductor_name: 18, flat_no: 20, road: 21, area: 22, locality_extra: 23, district: 24,
           state_code: 25, pincode: 26, email: 27, std_code: 28, phone: 29, resp_name: 32, resp_designation: 33,
-          resp_road: 35, resp_area: 36, resp_locality_extra: 37, resp_district: 38, resp_state_code: 39, resp_pincode: 40,
+          resp_flat_no: 34, resp_road: 35, resp_area: 36, resp_locality_extra: 37, resp_district: 38, resp_state_code: 39, resp_pincode: 40,
           resp_email: 41, resp_std_code: 43, resp_phone: 44, resp_pan: 58, ain: 67
         },
         '138_new': {
-          tan: 9, deductor_pan: 11, deductor_name: 18, state_code: 20, locality_extra: 23, area: 24, pincode: 26,
+          tan: 9, deductor_pan: 11, deductor_name: 18, state_code: 20, flat_no: 22, locality_extra: 23, area: 24, pincode: 26,
           std_code: 27, phone: 28, ain: 29, resp_pan: 34, road: 35, district: 36, email: 38, resp_name: 39, resp_designation: 40,
-          resp_road: 42, resp_area: 43, resp_std_code: 45, resp_phone: 46, resp_locality_extra: 50, resp_district: 51,
+          resp_flat_no: 41, resp_road: 42, resp_area: 43, resp_std_code: 45, resp_phone: 46, resp_locality_extra: 50, resp_district: 51,
           resp_state_code: 52, resp_pincode: 53, resp_email: 54
         },
         // Best-effort — old 24Q-era layout, derived from one real sample per
         // style rather than diffed against multiple examples like the maps
         // above, so double-check address fields in particular.
         '24q_fh': {
-          tan: 12, deductor_pan: 14, deductor_name: 18, road: 21, area: 22, district: 24, state_code: 25, pincode: 26,
-          email: 27, resp_name: 32, resp_designation: 33, resp_road: 36, resp_area: 35, resp_district: 38, resp_state_code: 39,
+          tan: 12, deductor_pan: 14, deductor_name: 18, flat_no: 20, road: 21, area: 22, district: 24, state_code: 25, pincode: 26,
+          email: 27, resp_name: 32, resp_designation: 33, resp_flat_no: 34, resp_road: 36, resp_area: 35, resp_district: 38, resp_state_code: 39,
           resp_pincode: 40, resp_email: 41, resp_phone: 42, resp_pan: 58, ain: 67
         },
         '24q_new': {
-          tan: 9, deductor_pan: 11, deductor_name: 18, area: 24, district: 38, state_code: 20, pincode: 26, email: 40,
-          road: 37, ain: 31, resp_pan: 36, resp_name: 43, resp_designation: 44, resp_road: 47, resp_area: 46, resp_district: 55,
+          tan: 9, deductor_pan: 11, deductor_name: 18, area: 24, district: 38, state_code: 20, flat_no: 22, pincode: 26, email: 40,
+          road: 37, ain: 31, resp_pan: 36, resp_name: 43, resp_designation: 44, resp_flat_no: 41, resp_road: 47, resp_area: 46, resp_district: 55,
           resp_state_code: 56, resp_pincode: 57, resp_email: 58, resp_phone: 60
         },
       };
@@ -1138,6 +1143,44 @@
       return fields ? {variant: detected.variant, fields} : null;
     }
 
+    function extractOldFileChallans(text, variant) {
+      // CD/DD field positions validated directly against genFormatA/genFormatB
+      // (this tool's own generators) and cross-checked against real files from
+      // two independent offices — same layout for 138 and 24Q variants.
+      const isFormatA = variant.endsWith('_fh'); // Format A ("_fh"): no leading '0' field. Format B ("_new"): leading '0' field shifts everything +1.
+      const off = isFormatA ? 0 : 1;
+      const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l);
+      const challansByIdx = {}; // challan_idx -> challan object
+      const order = [];
+      for (const line of lines) {
+        const f = line.split('^');
+        const tag = f[1 + off];
+        if (tag === 'CD') {
+          const idx = f[3 + off];
+          const ch = isFormatA ? {
+            receipt_no: f[14], ddo_serial: f[16],
+            tv_date_ddmmyyyy: f[18], tv_date_slash: ddmmyyyyToSlash(f[18]),
+            tv_amount: parseFloat(f[7]) || 0, deductees: [],
+          } : {
+            receipt_no: f[13 + off], ddo_serial: f[17 + off],
+            tv_date_slash: f[15 + off], tv_date_ddmmyyyy: ddmmyyyyFromSlash(f[15 + off]),
+            tv_amount: parseFloat(f[5 + off]) || 0, deductees: [],
+          };
+          challansByIdx[idx] = ch;
+          order.push(idx);
+        } else if (tag === 'DD') {
+          const challanIdx = isFormatA ? f[4] : f[4 + off];
+          const ch = challansByIdx[challanIdx];
+          if (!ch) continue;
+          if (isFormatA) {
+            ch.deductees.push({pan: f[7], name: f[8], taxable: parseFloat(f[19]) || 0, tds: parseFloat(f[23]) || 0});
+          } else {
+            ch.deductees.push({pan: f[12 + off], name: f[13 + off], taxable: parseFloat(f[18 + off]) || 0, tds: parseFloat(f[19 + off]) || 0});
+          }
+        }
+      }
+      return order.map(idx => challansByIdx[idx]);
+    }
 
     function groupSparkByMonth(employees) {
       const monthDeductees = {};   // mk -> [{pan,name,taxable,tds}]
@@ -1353,7 +1396,17 @@
           if (val && target) {target.value = val; filled++;}
         }
         if (el('f_resp_same_address').checked) syncRespAddressFromDeductor();
-        setStatus('oldFileStatus', `Filled ${filled} field${filled === 1 ? '' : 's'} from this file (${result.variant.replace('_', ' ')} layout). Review below — address sub-fields are best-effort for the older layouts.`, 'ok');
+
+        const oldChallans = extractOldFileChallans(text, result.variant);
+        let challanNote = '';
+        if (oldChallans.length) {
+          challans = oldChallans;
+          enableStep(4);
+          renderChallanTable();
+          const totalDeductees = oldChallans.reduce((s, c) => s + c.deductees.length, 0);
+          challanNote = ` Also loaded ${oldChallans.length} challan${oldChallans.length === 1 ? '' : 's'} (${totalDeductees} deductee${totalDeductees === 1 ? '' : 's'}) from this file into step 4 — edit or regenerate as needed.`;
+        }
+        setStatus('oldFileStatus', `Filled ${filled} field${filled === 1 ? '' : 's'} from this file (${result.variant.replace('_', ' ')} layout). Review below — address sub-fields are best-effort for the older layouts.${challanNote}`, 'ok');
       } catch (err) {
         setStatus('oldFileStatus', 'Could not read this file — ' + err.message, 'err');
       }
