@@ -1399,12 +1399,19 @@
 
         const oldChallans = extractOldFileChallans(text, result.variant);
         let challanNote = '';
-        if (oldChallans.length) {
+        if (oldChallans.length && (!challans || challans.length === 0)) {
+          // Only pre-fill from the old file when step 4 has nothing real in
+          // it yet — covers "haven't touched bin/spark", "skipped both",
+          // and "skipped one, other has no TDS" alike. The moment real
+          // reconciliation has put something in challans (a BIN+SPARK match,
+          // or a SPARK-only build), the old file must never overwrite it.
           challans = oldChallans;
           enableStep(4);
           renderChallanTable();
           const totalDeductees = oldChallans.reduce((s, c) => s + c.deductees.length, 0);
           challanNote = ` Also loaded ${oldChallans.length} challan${oldChallans.length === 1 ? '' : 's'} (${totalDeductees} deductee${totalDeductees === 1 ? '' : 's'}) from this file into step 4 — edit or regenerate as needed.`;
+        } else if (oldChallans.length) {
+          challanNote = ' (This file also has challan/deductee data, but step 4 already has real BIN/SPARK data in it, so only the office details above were used.)';
         }
         setStatus('oldFileStatus', `Filled ${filled} field${filled === 1 ? '' : 's'} from this file (${result.variant.replace('_', ' ')} layout). Review below — address sub-fields are best-effort for the older layouts.${challanNote}`, 'ok');
       } catch (err) {
