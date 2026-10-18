@@ -1206,23 +1206,82 @@
       const warnings = [];
       const matchedMonths = new Set();
 
+      // Some months have exactly one transfer voucher covering every
+      // employee's TDS for that month — the original, validated shape.
+      // A real office's next quarter showed a different shape for the
+      // same TAN: the same month split into several vouchers, one per
+      // distinct deduction amount (e.g. 6000, 1000, 0 instead of one
+      // combined 7000). Group by month first so both shapes work:
+      // compare the SUM of a month's vouchers against SPARK's month
+      // total once (not each voucher against the whole month total,
+      // which used to flag every voucher as "wrong" the moment a month
+      // had more than one), then give each voucher only the deductee(s)
+      // whose own TDS matches its amount — otherwise every voucher in a
+      // multi-voucher month ended up with the same full deductee list,
+      // none of which summed to that voucher's own amount.
+      const binByMonth = {};
       for (const b of bin) {
         const mk = monthKey(b.tv_date);
-        matchedMonths.add(mk);
-        const deductees = (monthDeductees[mk] || []).slice().sort((a, b) => a.name.localeCompare(b.name));
-        const sparkTotal = monthSparkTotal[mk];
-        if (sparkTotal === undefined) {
-          warnings.push(`BIN receipt ${b.receipt_no} (${b.tv_date}): no matching SPARK month found for ${mk}.`);
-        } else if (Math.abs(sparkTotal - b.tv_amount) > 0.01) {
-          warnings.push(`BIN receipt ${b.receipt_no} (${b.tv_date}): SPARK total for ${mk} is ${fmtAmt(sparkTotal)} but BIN amount is ${fmtAmt(b.tv_amount)}.`);
-        }
-        const [d, m, y] = b.tv_date.split('/');
-        result.push({
-          receipt_no: b.receipt_no, ddo_serial: b.ddo_serial,
-          tv_date_slash: b.tv_date, tv_date_ddmmyyyy: d + m + y,
-          tv_amount: b.tv_amount, deductees
-        });
+        (binByMonth[mk] = binByMonth[mk] || []).push(b);
       }
+
+      for (const mk in binByMonth) {
+        matchedMonths.add(mk);
+        const vouchers = binByMonth[mk];
+        const sparkTotal = monthSparkTotal[mk];
+        const binMonthTotal = vouchers.reduce((s, v) => s + v.tv_amount, 0);
+
+        if (sparkTotal === undefined) {
+          for (const b of vouchers) {
+            warnings.push(`BIN receipt ${b.receipt_no} (${b.tv_date}): no matching SPARK month found for ${mk}.`);
+          }
+        } else if (Math.abs(sparkTotal - binMonthTotal) > 0.01) {
+          warnings.push(`BIN total for ${mk} is ${fmtAmt(binMonthTotal)} across ${vouchers.length} voucher${vouchers.length > 1 ? 's' : ''}, but SPARK shows ${fmtAmt(sparkTotal)} for that month.`);
+        }
+
+        const pool = (monthDeductees[mk] || []).slice();
+        const used = new Array(pool.length).fill(false);
+
+        for (const b of vouchers) {
+          let assigned;
+          if (vouchers.length === 1) {
+            // Single voucher for the month: it covers everyone, as before.
+            assigned = pool.filter((_, i) => !used[i]);
+            used.fill(true);
+          } else {
+            // Multiple vouchers: match each to the deductee(s) whose TDS
+            // equals this voucher's amount exactly.
+            assigned = [];
+            for (let i = 0; i < pool.length; i++) {
+              if (!used[i] && Math.abs(pool[i].tds - b.tv_amount) <= 0.01) {
+                assigned.push(pool[i]);
+                used[i] = true;
+              }
+            }
+            if (assigned.length === 0 && b.tv_amount > 0.01) {
+              warnings.push(`BIN receipt ${b.receipt_no} (${b.tv_date}, ${fmtAmt(b.tv_amount)}): couldn't match this voucher to a specific SPARK deductee for ${mk} — check it by hand.`);
+            }
+          }
+          const [d, m, y] = b.tv_date.split('/');
+          result.push({
+            receipt_no: b.receipt_no, ddo_serial: b.ddo_serial,
+            tv_date_slash: b.tv_date, tv_date_ddmmyyyy: d + m + y,
+            tv_amount: b.tv_amount,
+            deductees: assigned.slice().sort((a, c) => a.name.localeCompare(c.name))
+          });
+        }
+
+        // Anyone left over (amounts didn't line up 1:1) still needs to be
+        // filed somewhere — attach to the month's last voucher and warn,
+        // rather than silently dropping them.
+        const leftover = pool.filter((_, i) => !used[i]);
+        if (leftover.length && vouchers.length > 1) {
+          const last = result[result.length - 1];
+          last.deductees = last.deductees.concat(leftover).sort((a, c) => a.name.localeCompare(c.name));
+          warnings.push(`${leftover.length} SPARK deductee(s) for ${mk} didn't match any specific BIN voucher amount — added to the last voucher (${last.receipt_no || last.tv_date_slash}); please check and move if needed.`);
+        }
+      }
+
       for (const mk in monthSparkTotal) {
         if (monthSparkTotal[mk] > 0 && !matchedMonths.has(mk)) {
           warnings.push(`SPARK shows TDS of ${fmtAmt(monthSparkTotal[mk])} for ${mk} but no matching BIN entry was found.`);
