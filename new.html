@@ -755,23 +755,41 @@
     // ============================================================
     // BIN PARSERS
     // ============================================================
+    // Content-based DDO-serial / Transfer-Voucher-Date disambiguation,
+    // shared by the CSV and XLSX readers below. TRACES' BIN-view export has
+    // been seen with these two columns in either order (and separately,
+    // with mislabeled header text — see parseBinXLSXBuffer) — identify each
+    // by what its value looks like rather than trusting a fixed position,
+    // so either column order reads correctly.
+    function assignBinRow(cReceipt, cCol1, cCol2, cNature, cAmount, cStatus) {
+      const fmt = v => (typeof v === 'number' ? String(Math.round(v)) : String(v ?? '')).trim();
+      const a = fmt(cCol1), b = fmt(cCol2);
+      const normA = normalizeDateToSlash(a), normB = normalizeDateToSlash(b);
+      const aIsDate = /^\d{2}\/\d{2}\/\d{4}$/.test(normA);
+      const bIsDate = /^\d{2}\/\d{2}\/\d{4}$/.test(normB);
+      let tv_date, ddo_serial;
+      if (bIsDate && !aIsDate) { tv_date = normB; ddo_serial = a; }
+      else if (aIsDate && !bIsDate) { tv_date = normA; ddo_serial = b; }
+      else { ddo_serial = a; tv_date = normB; } // ambiguous: keep the original, validated column order
+      return {
+        receipt_no: fmt(cReceipt), ddo_serial, tv_date,
+        nature: fmt(cNature), tv_amount: parseFloat(cAmount), status: fmt(cStatus),
+      };
+    }
+
     function parseBinCSVText(text) {
       // Read positionally (same approach as the XLSX parser below), rather
       // than trusting exact header text — BIN exports have been seen with
       // mislabeled headers (see parseBinXLSXBuffer), and header wording can
-      // also vary slightly between offices/portal versions. The six fields
-      // are consistently in the same column order regardless of the header
-      // row's exact text, so we skip the header row and read by position.
+      // also vary slightly between offices/portal versions. Receipt no.,
+      // Nature, Amount and Status are consistently in the same column
+      // regardless of header text, so we skip the header row and read those
+      // by position; DDO serial and TV date go through assignBinRow since
+      // their own column order isn't consistent (see that function).
       const parsed = Papa.parse(text, {header: false, skipEmptyLines: true});
       const rows = parsed.data.slice(1); // drop header row
-      return rows.map(r => ({
-        receipt_no: String(r[0] ?? '').trim(),
-        ddo_serial: String(r[1] ?? '').trim(),
-        tv_date: normalizeDateToSlash(r[2] ?? ''),
-        nature: String(r[3] ?? '').trim(),
-        tv_amount: parseFloat(r[4]),
-        status: String(r[5] ?? '').trim(),
-      })).filter(e => e.receipt_no && /^\d+$/.test(e.receipt_no) && !isNaN(e.tv_amount));
+      return rows.map(r => assignBinRow(r[0], r[1], r[2], r[3], r[4], r[5]))
+        .filter(e => e.receipt_no && /^\d+$/.test(e.receipt_no) && !isNaN(e.tv_amount));
     }
 
     function normalizeDateToSlash(raw) {
@@ -799,26 +817,54 @@
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(ws, {header: 1, raw: true});
       const dataRows = rows.slice(1).filter(r => r && r[0] !== undefined && r[0] !== '');
-      // Positional: first 6 columns, regardless of (possibly mislabeled) headers.
-      return dataRows.map(r => ({
-        receipt_no: String(r[0]).trim(),
-        ddo_serial: String(typeof r[1] === 'number' ? Math.round(r[1]) : r[1]).trim(),
-        tv_date: normalizeDateToSlash(r[2]),
-        nature: String(r[3] || '').trim(),
-        tv_amount: parseFloat(r[4]),
-        status: String(r[5] || '').trim(),
-      })).filter(e => e.receipt_no && !isNaN(e.tv_amount));
+      // Positional for receipt/nature/amount/status, regardless of (possibly
+      // mislabeled) headers; DDO serial vs. TV date goes through
+      // assignBinRow since that pair's column order isn't consistent.
+      return dataRows.map(r => assignBinRow(r[0], r[1], r[2], r[3], r[4], r[5]))
+        .filter(e => e.receipt_no && !isNaN(e.tv_amount));
     }
 
-    // ---- PDF BIN parsing: geometric row/column reconstruction ----
-    // The BIN-view PDF export uses a very narrow 14-column table, so text
-    // wraps hard within every cell (even splitting numbers across lines).
-    // We rebuild rows from Y-gaps and columns from X-gaps, then keep only
-    // numeric-safe fragments for the amount/date columns (a neighbouring
-    // column's stray character can sit right on a column boundary).
+    // Classifies one complete, non-wrapped BIN data row's whitespace tokens
+    // by content rather than position — same reasoning as assignBinRow
+    // above, applied to a PDF's reconstructed text line. tokens[0] is
+    // already confirmed to be the receipt number by the caller.
+    function classifyBinRowTokens(tokens) {
+      const used = new Array(tokens.length).fill(false);
+      used[0] = true;
+      let tv_date = '', ddo_serial = '', tv_amount = NaN, status = '';
+      for (let i = 1; i < tokens.length; i++) {
+        if (used[i]) continue;
+        const norm = normalizeDateToSlash(tokens[i]);
+        if (/^\d{2}\/\d{2}\/\d{4}$/.test(norm)) { tv_date = norm; used[i] = true; break; }
+      }
+      for (let i = 1; i < tokens.length; i++) {
+        if (used[i]) continue;
+        if (/^[\d,]+\.\d{2}$/.test(tokens[i])) { tv_amount = parseFloat(tokens[i].replace(/,/g, '')); used[i] = true; break; }
+      }
+      for (let i = 1; i < tokens.length; i++) {
+        if (used[i]) continue;
+        if (/^[A-Za-z]+$/.test(tokens[i]) && tokens[i].length >= 4) { status = tokens[i]; used[i] = true; break; }
+      }
+      for (let i = 1; i < tokens.length; i++) {
+        if (used[i]) continue;
+        if (/^\d{1,7}$/.test(tokens[i])) { ddo_serial = tokens[i]; used[i] = true; break; }
+      }
+      const nature = tokens.filter((t, i) => !used[i]).join(' ');
+      return {receipt_no: tokens[0], ddo_serial, tv_date, nature, tv_amount, status};
+    }
+
+    // ---- PDF BIN parsing ----
+    // TRACES' BIN-view export has been seen in two different PDF layouts:
+    // a plain one-line-per-row table, and a very narrow table where text
+    // wraps hard within every cell (even splitting a single date or amount
+    // across lines). Pass 1 tries the simple one-line read, matching each
+    // row's six fields by content (so it doesn't matter which order the
+    // DDO-serial and date columns come in, or how "Nature of Payment" is
+    // split into words). If a page yields no complete rows that way — the
+    // narrow/wrapped layout — pass 2 falls back to the geometric row/column
+    // reconstruction originally built and validated for that case.
     async function parseBinPDFBuffer(buf) {
       const pdf = await pdfjsLib.getDocument({data: buf}).promise;
-      const N_COLS = 14;
       let allEntries = [];
 
       for (let p = 1; p <= pdf.numPages; p++) {
@@ -837,13 +883,38 @@
           });
         if (words.length === 0) continue;
 
-        // --- row segmentation via Y0 gaps ---
+        // --- Pass 1: plain one-line-per-row reads ---
+        const LINE_GAP = 4.0;
+        const yValsFine = [...new Set(words.map(w => Math.round(w.y0 * 10) / 10))].sort((a, b) => a - b);
+        let lineBounds = [yValsFine[0] - 0.5];
+        for (let i = 0; i < yValsFine.length - 1; i++) {if (yValsFine[i + 1] - yValsFine[i] > LINE_GAP) lineBounds.push(yValsFine[i + 1] - 0.5);}
+        lineBounds.push(999999);
+        const lineGroups = lineBounds.slice(0, -1).map(() => []);
+        for (const w of words) {
+          const yr = Math.round(w.y0 * 10) / 10;
+          for (let i = 0; i < lineBounds.length - 1; i++) {
+            if (yr >= lineBounds[i] && yr < lineBounds[i + 1]) {lineGroups[i].push(w); break;}
+          }
+        }
+
+        const pass1 = [];
+        for (const L of lineGroups) {
+          const sorted = [...L].sort((a, b) => a.x0 - b.x0);
+          const tokens = sorted.map(w => w.text.trim()).filter(t => t !== '');
+          if (!tokens.length || !/^\d{4,10}$/.test(tokens[0])) continue; // not a data row
+          const row = classifyBinRowTokens(tokens);
+          if (row.tv_date && row.ddo_serial && row.status && !isNaN(row.tv_amount)) pass1.push(row);
+        }
+
+        if (pass1.length) { allEntries = allEntries.concat(pass1); continue; }
+
+        // --- Pass 2 (fallback): geometric row/column reconstruction, for
+        // the narrow table where a single cell's text wraps across lines ---
+        const N_COLS = 14;
         const yVals = [...new Set(words.map(w => Math.round(w.y0 * 10) / 10))].sort((a, b) => a - b);
-        const gaps = [];
-        for (let i = 0; i < yVals.length - 1; i++) gaps.push(yVals[i + 1] - yVals[i]);
         const ROW_GAP = 13.0;
         let rowBounds = [yVals[0] - 0.5];
-        for (let i = 0; i < gaps.length; i++) {if (gaps[i] > ROW_GAP) rowBounds.push(yVals[i + 1] - 0.5);}
+        for (let i = 0; i < yVals.length - 1; i++) {if (yVals[i + 1] - yVals[i] > ROW_GAP) rowBounds.push(yVals[i + 1] - 0.5);}
         rowBounds.push(999999);
 
         const rows = rowBounds.slice(0, -1).map(() => []);
