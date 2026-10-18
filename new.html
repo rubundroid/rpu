@@ -1460,12 +1460,13 @@
 
       for (const ch of challans) {
         seq++;
-        lines.push(buildRow(23, {
+        lines.push(buildRow(24, {
           0: '0', 1: seq, 2: 'CD', 3: '1', 4: '--Select--',
           5: fmtAmt(ch.tv_amount), 6: '0.00', 7: '0.00', 8: '0.00', 10: fmtAmt(ch.tv_amount),
           13: ch.receipt_no, 15: ch.tv_date_slash, 17: pad5(ch.ddo_serial), 18: 'B', 19: '--Select--',
-          20: '0.00', 21: '0.00', // RPU 1.2: Interest Allocation / Others Allocation (new mandatory columns 19/20 in the Challan grid)
-          22: 'LineHash',
+          20: '0.00', 21: '0.00', // RPU 1.2: Interest Allocation / Others Allocation (new mandatory columns in the Challan grid)
+          // 22 left blank: "Challan Balance as per consolidated file" is a TRACES-computed display column, not a supplied value
+          23: 'LineHash',
         }));
       }
 
