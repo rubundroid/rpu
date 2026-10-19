@@ -455,10 +455,132 @@
       color: var(--ink);
       line-height: 1.55;
     }
+
+    /* ---- Online / Offline route switch ---- */
+    #mainWrap {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .mode-bar {
+      order: 0;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+
+    .mode-opt {
+      flex: 1;
+      min-width: 260px;
+      display: block;
+      position: relative;
+      background: var(--panel);
+      border: 1.5px solid var(--line);
+      border-radius: 10px;
+      padding: 12px 14px 12px 42px;
+      cursor: pointer;
+    }
+
+    .mode-opt input {
+      position: absolute;
+      left: 15px;
+      top: 15px;
+      width: 16px;
+      height: 16px;
+      margin: 0;
+      accent-color: var(--accent);
+    }
+
+    .mode-opt b {
+      display: block;
+      font-size: .92rem;
+      color: var(--ink);
+    }
+
+    .mode-opt .mode-sub {
+      display: block;
+      font-size: .78rem;
+      color: var(--ink-soft);
+      margin-top: 3px;
+      line-height: 1.5;
+    }
+
+    .mode-opt.active {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+    }
+
+    .mode-opt:focus-within {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    .mode-hidden {
+      display: none !important;
+    }
+
+    body[data-mode="online"] .only-offline,
+    body[data-mode="offline"] .only-online {
+      display: none !important;
+    }
+
+    .online-controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px 16px;
+      margin-top: 10px;
+    }
+
+    .online-controls .oc-section {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1 1 300px;
+      min-width: 0;
+    }
+
+    .online-controls select {
+      flex: 1 1 auto;
+      min-width: 0;
+      width: 100%;
+      max-width: 100%;
+      padding: 7px 9px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      font-size: .84rem;
+      font-family: var(--sans);
+      color: var(--ink);
+      background: #fff;
+      text-overflow: ellipsis;
+    }
+
+    .online-controls .field-label {
+      margin: 0;
+    }
+
+    #mapGuide {
+      overflow-x: auto;
+    }
+
+    /* nothing to show (no template made yet) → no empty green strip */
+    #onlineSummary:empty {
+      display: none;
+    }
+
+    table.guide th {
+      white-space: normal;
+    }
+
+    table.guide td.num {
+      font-family: var(--mono);
+      white-space: nowrap;
+    }
   </style>
 </head>
 
-<body>
+<body data-mode="online">
 
   <header>
     <div class="wrap" style="padding:0;">
@@ -466,17 +588,35 @@
         <img src="logo.png" alt="RPU Sidekick" style="width:40px; height:40px; border-radius:10px;">
         <h1>TDS RPU Reconciliation Tool</h1>
       </div>
-      <p>Form 138 (24Q) · BIN view + SPARK reconciliation → RPU-ready output, generated locally in your browser</p>
+      <p><span class="only-offline">Form 138 (24Q) · BIN view + SPARK reconciliation → RPU-ready output, generated locally in your browser</span><span class="only-online">Form 138 · SPARK Annexure I → TRACES bulk-upload template (CSV), generated locally in your browser</span></p>
     </div>
   </header>
 
-  <div class="wrap">
+  <div class="wrap" id="mainWrap">
+
+    <!-- ROUTE: Online (TRACES bulk-upload CSV) or Offline (RPU / FVU files, the original flow) -->
+    <div class="mode-bar" id="modeBar" role="radiogroup" aria-label="How do you want to file?">
+      <label class="mode-opt" id="modeOptOnline">
+        <input type="radio" name="filemode" value="online" id="modeOnline" checked>
+        <b>Online — file directly on TRACES</b>
+        <span class="mode-sub">SPARK PDF-ൽ നിന്ന് TRACES-ന്റെ bulk-upload ടെംപ്ലേറ്റ് (CSV) ഉണ്ടാക്കാം. BIN TRACES തന്നെ import
+          ചെയ്യും. പരമാവധി 200 deductee records.</span>
+      </label>
+      <label class="mode-opt" id="modeOptOffline">
+        <input type="radio" name="filemode" value="offline" id="modeOffline">
+        <b>Offline — RPU / FVU file</b>
+        <span class="mode-sub">നിലവിലുള്ള രീതി: BIN + SPARK → RPU/FVU ഫയൽ. 200-ൽ കൂടുതൽ records ഉണ്ടെങ്കിൽ ഇത് ഉപയോഗിക്കുക.</span>
+      </label>
+    </div>
 
     <!-- STEP 1: BIN upload -->
     <div class="step" id="step1">
-      <h2><span class="num">1</span> BIN data (CSV, XLSX or PDF — any one)</h2>
+      <h2><span class="num">1</span> BIN data (CSV, XLSX or PDF — any one)<span class="only-online">· optional</span></h2>
       <p class="hint">Upload the BIN view export in whichever format you have it. The tool detects the format from the
         file extension.</p>
+      <p class="hint only-online">Online-ൽ ഇത് നിർബന്ധമില്ല — BIN TRACES തന്നെ import ചെയ്യും. എങ്കിലും ഫയൽ ചേർത്താൽ ഓരോ BIN-ന്റെയും
+        കൃത്യമായ തീയതി ഇവിടെ വരും, തുകകൾ SPARK-മായി ഒത്തുനോക്കും, Challan Mapping-ന് BIN തിരിച്ചുള്ള ഗൈഡും കിട്ടും. ചേർക്കുന്നെങ്കിൽ
+        താഴത്തെ പട്ടികയിൽ തിരുത്തലുകൾ വരുത്തുന്നതിന് മുൻപ് ചേർക്കുക — ചേർത്താൽ പട്ടിക പുതുതായി ഉണ്ടാക്കും.</p>
       <details class="howto">
         <summary>ഈ ഫയൽ എവിടെ നിന്ന് കിട്ടും?</summary>
         <div class="howto-body">
@@ -498,7 +638,7 @@
         <span class="filetag" id="binTag"></span>
       </div>
       <div class="status-line" id="binStatus"></div>
-      <div class="small-btn-row"><button type="button" class="secondary" id="skipBin">No file — I'll enter challans
+      <div class="small-btn-row only-offline"><button type="button" class="secondary" id="skipBin">No file — I'll enter challans
           manually</button></div>
     </div>
 
@@ -506,6 +646,7 @@
     <div class="step" id="step2">
       <h2><span class="num">2</span> SPARK-generated Form 138 (24Q) PDF</h2>
       <p class="hint">The quarterly statement PDF printed from SPARK, with Annexure I attached.</p>
+      <p class="hint only-online">Online-ൽ ഇതാണ് പ്രധാന ഫയൽ: ഇതിലെ Annexure I വരികളിൽ നിന്നാണ് ടെംപ്ലേറ്റ് ഉണ്ടാകുന്നത്.</p>
       <details class="howto">
         <summary>ഈ ഫയൽ എവിടെ നിന്ന് കിട്ടും?</summary>
         <div class="howto-body">
@@ -519,8 +660,8 @@
         <input type="file" id="sparkFile" accept=".pdf">
       </div>
       <div class="status-line" id="sparkStatus"></div>
-      <div class="small-btn-row"><button type="button" class="secondary" id="skipSpark">No file — I'll fill deductor
-          &amp; deductee details manually</button></div>
+      <div class="small-btn-row"><button type="button" class="secondary" id="skipSpark"><span class="only-offline">No file — I'll fill deductor
+          &amp; deductee details manually</span><span class="only-online">No SPARK PDF — I'll add the deductee rows by hand</span></button></div>
     </div>
 
     <!-- STEP 3: Deductor details (editable, prefilled from SPARK) -->
@@ -620,22 +761,42 @@
 
     <!-- STEP 4: reconciliation -->
     <div class="step disabled" id="step4">
-      <h2><span class="num">4</span> Reconciliation</h2>
-      <p class="hint">Each BIN transfer voucher matched against SPARK's Annexure I totals for that month. Edit any cell
+      <h2><span class="num">4</span> <span class="only-offline">Reconciliation</span><span class="only-online">Check the rows</span></h2>
+      <p class="hint only-offline">Each BIN transfer voucher matched against SPARK's Annexure I totals for that month. Edit any cell
         if something looks off, then generate.</p>
+      <p class="hint only-online">SPARK-ലെ TDS വരികൾ മാസം തിരിച്ച് താഴെ കാണാം — ഒരു മാസം TRACES-ലെ ഒരു BIN-ന് തുല്യം. ഓരോ വിഭാഗത്തിലെയും
+        <b>BIN date</b> ആണ് ടെംപ്ലേറ്റിലെ മൂന്ന് തീയതി കോളങ്ങളിലും (payment, deduction, deposit) വരുന്നത്. ഏത് സെല്ലും തിരുത്താം;
+        എല്ലാം ശരിയെങ്കിൽ ടെംപ്ലേറ്റ് ഉണ്ടാക്കുക.</p>
+      <div class="warn-box only-online" id="onlineDateNote" style="display:none;"></div>
       <div id="reconMsgs"></div>
       <div id="reconTables"></div>
       <div class="small-btn-row add-row-btn">
         <button type="button" class="secondary" id="btnAddChallan">+ Add challan</button>
       </div>
-      <div class="small-btn-row">
+      <div class="small-btn-row only-offline">
         <button id="btnGenerate" disabled>Generate output files</button>
+      </div>
+      <div class="online-controls only-online">
+        <span class="oc-section">
+          <label class="field-label" for="o_section" style="white-space:nowrap;">Section code</label>
+          <select id="o_section" title="Note 1 of the portal's help file">
+            <option value="1001" selected>1001 — Government employees other than Union Government employees</option>
+            <option value="1002">1002 — Employees other than Government employees</option>
+            <option value="1003">1003 — Indian Government employees</option>
+            <option value="1032">1032 — Specified Senior Citizen</option>
+          </select>
+        </span>
+        <span id="rowCounter" class="hint" style="margin:0;"></span>
+      </div>
+      <div class="small-btn-row only-online">
+        <button id="btnGenerateOnline" disabled>Create bulk-upload template</button>
       </div>
     </div>
 
     <!-- STEP 5: downloads -->
     <div class="step disabled" id="step5">
       <h2><span class="num">5</span> Download</h2>
+      <div class="only-offline">
       <div id="genWarnings"></div>
       <div class="dl-row">
         <div class="dl-card">
@@ -659,6 +820,47 @@
           <button id="dlB">Download</button>
         </div>
       </div>
+      </div>
+
+      <!-- Online route: the bulk-upload CSV for TRACES, plus the Challan Mapping guide -->
+      <div class="only-online" id="onlinePanel">
+        <div id="onlineWarnings"></div>
+        <div class="ok-box" id="onlineSummary"></div>
+        <div class="warn-box" id="onlineStale" style="display:none;">The rows changed after this template was created — click <b>Create bulk-upload template</b> again before downloading.</div>
+        <div class="dl-row">
+          <div class="dl-card">
+            <h3>TRACES bulk-upload template (CSV)</h3>
+            <p id="fnameOnline" class="hint" style="margin:0 0 8px;"></p>
+            <p class="hint" style="margin:0 0 10px;">
+              ഈ CSV <b>Excel-ൽ തുറന്ന് save ചെയ്യരുത്</b> — തീയതിയും സംഖ്യയും ഫോർമാറ്റ് മാറിപ്പോകും. ഡൗൺലോഡ് ചെയ്ത ഫയൽ അതേപടി
+              TRACES-ൽ upload ചെയ്യുക.
+            </p>
+            <button id="dlOnline">Download .csv</button>
+          </div>
+        </div>
+        <div id="onlinePeriod" class="hint" style="margin:14px 0 0;"></div>
+        <h3 style="font-size:.9rem; margin:18px 0 4px;">Challan Mapping guide</h3>
+        <p class="hint" style="margin:0 0 6px;">TRACES-ൽ <b>Challan Mapping</b> ചെയ്യുമ്പോൾ ഓരോ BIN-നും താഴെ പറയുന്ന Sl. No. വരികൾ
+          ടിക് ചെയ്യുക; <b>Difference (B−C)</b> ₹0 ആകണം.</p>
+        <div id="mapGuide"></div>
+        <details class="howto">
+          <summary>TRACES-ൽ ഇത് എങ്ങനെ upload ചെയ്യാം?</summary>
+          <div class="howto-body">
+            1. TRACES-ൽ TAN ഉപയോഗിച്ച് ലോഗിൻ ചെയ്യുക → <b>e-file &amp; View</b> → <b>File TDS/TCS Forms &amp; Statements</b>
+            (പഴയ "Compliance under Income-tax Act, 1961" അല്ല).<br>
+            2. <b>Form No. 138</b> → <b>File Now</b> → Tax Year, Quarter, <b>Regular</b>, <b>Prepare &amp; File Online</b>.<br>
+            3. Deductor / Responsible Person വിവരങ്ങൾ പരിശോധിക്കുക.<br>
+            4. <b>Challan Details</b>-ൽ unconsumed challans/BINs <b>import</b> ചെയ്യുക (BIN കൈകൊണ്ട് ചേർക്കാൻ പറ്റില്ല, import
+            മാത്രം).<br>
+            5. Annexure 1 → <b>Add Bulk Deductee Details</b> → <b>Browse File</b> (ഈ CSV) → <b>Upload</b>.<br>
+            6. <b>Challan Mapping</b>: മുകളിലെ ഗൈഡ് പോലെ ഓരോ BIN-നും വരികൾ ടിക് ചെയ്യുക.<br>
+            7. <b>Validate Statement</b> → തെറ്റുകൾ തിരുത്തുക → DSC / Aadhaar OTP / EVC PIN ഉപയോഗിച്ച് e-verify ചെയ്ത് acknowledgement
+            സൂക്ഷിക്കുക.<br>
+            <span class="hint">ഇത് പൊതുവായ വിവരണമാണ്; portal-ൽ കാണുന്ന പേരുകൾ അനുസരിച്ച് ചെയ്യുക. Online statement-ന് 200 deductee
+              records വരെയേ പറ്റൂ.</span>
+          </div>
+        </details>
+      </div>
     </div>
 
   </div>
@@ -680,6 +882,13 @@
     let challans = null;       // reconciled, editable in the DOM
     let reconWarnings = [];    // reconcile()'s findings, kept so the top box can be redrawn after every edit (see renderReconBox)
     let reconOkHtml = '';      // the green note shown instead when reconcile() had nothing to warn about
+    let currentMode = 'online'; // 'online' = TRACES bulk-upload CSV (default) · 'offline' = RPU / FVU files (the original flow)
+    let tableTouched = false;   // the user has edited / added / imported rows in the table (Online asks before a new file rebuilds it)
+    let binSkipped = false;     // BIN was skipped (by the button, or automatically on the Online route) — keeps the status wording right for the current route
+    let onlineSig = null;       // signature of the rows the last Online template was made from (null = none made yet)
+    let offlineGenerated = false; // the Offline "Generate output files" button has been used (so step 5 shows its downloads)
+    const BIN_MSG_ONLINE = 'No BIN file — fine for the Online route, TRACES imports the BIN itself. Add the file only if you want the exact BIN dates here.';
+    const BIN_MSG_OFFLINE = "No BIN file — add challans manually in step 4 once you're past step 3.";
     const DEDUCTOR_ADDRESS_IDS = ['f_flat_no', 'f_road', 'f_area', 'f_locality_extra', 'f_district', 'f_state_code', 'f_pincode'];
     const RESP_ADDRESS_IDS = ['f_resp_flat_no', 'f_resp_road', 'f_resp_area', 'f_resp_locality_extra', 'f_resp_district', 'f_resp_state_code', 'f_resp_pincode'];
 
@@ -1606,6 +1815,245 @@
     }
 
     // ============================================================
+    // ONLINE ROUTE — TRACES "Prepare & File Online" → Annexure 1 → Add Bulk Deductee Details
+    // ============================================================
+    // TRACES' own BulkUploadTemplate.csv (as downloaded on 19 Oct 2026): two header records — the
+    // column titles, then the column letters (there is no (B)) — and after them one record per deductee.
+    // The header below is that file's text character for character (the double space in the PAN title,
+    // the trailing spaces, the line breaks inside the quoted titles), so the portal is given exactly
+    // what it handed out. Columns:
+    //   A Sl. No. · C PAN · D Name · E Employee reference no. / PPO no. · F Section code ·
+    //   G Date of payment/credit · H Date of deduction · I Amount paid or credited · J Total tax deducted ·
+    //   K Deposited? (Yes/No) · L Total tax deposited · M Date of deposit · N Reason (A / C) ·
+    //   O Certificate no. u/s 395(1)
+    const ONLINE_TEMPLATE_HEAD =
+      'Sl. No. ,' +
+      'Permanent Account Number of the  employee/ specified senior citizen,' +
+      'Name of the employee/ specified senior citizen,' +
+      '"Employee reference number provided by employer/\nPPO number, if available",' +
+      'Section Code (refer Note 1),' +
+      'Date of payment/ credit (dd/mm/ yyyy),' +
+      'Date of deduction (dd/mm/ yyyy),' +
+      'Amount Paid or Credited,' +
+      'Total Tax Deducted (refer Note 2),' +
+      '"Whether total \namount of tax \ndeducted as \nmentioned in \ncolumn (J) has \nbeen deposited \n(Yes/No) ",' +
+      'Total Tax Deposited,' +
+      'Date of Deposit (dd/mm/ yyyy),' +
+      '"Reason for \nnon-deduction / \nlower \ndeduction/ \nhigher \ndeduction (refer Notes 3 and 4)",' +
+      'Certificate number of the certificate issued u/s 395(1) for non-deduction / lower deduction\r\n' +
+      '(A),(C ),(D),(E ),(F),(G),(H),(I),(J),(K),(L),(M),(N),(O)\r\n';
+    // TRACES' notice: "Online statement preparation is supported for up to 200 deductee records."
+    const ONLINE_ROW_LIMIT = 200;
+
+    function escHtml(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+    }
+    function csvCell(v) {
+      const s = String(v == null ? '' : v);
+      return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    }
+    // A plain number the way a spreadsheet writes it: 5000, or 5000.50 when there are paise.
+    function fmtNum(n) {
+      const v = Math.round((Number(n) || 0) * 100) / 100;
+      return Number.isInteger(v) ? String(v) : v.toFixed(2);
+    }
+    function isRealDate(slash) {
+      const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(slash || ''));
+      if (!m) return false;
+      const d = new Date(+m[3], +m[2] - 1, +m[1]);
+      return d.getFullYear() === +m[3] && d.getMonth() === +m[2] - 1 && d.getDate() === +m[1];
+    }
+    // "31/07/2026" -> {fy: '2026-2027', quarter: 'Q2'}  (Q1 Apr-Jun, Q2 Jul-Sep, Q3 Oct-Dec, Q4 Jan-Mar)
+    function periodOfSlashDate(slash) {
+      const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(slash || ''));
+      if (!m || +m[2] < 1 || +m[2] > 12) return null;
+      const mon = +m[2], yr = +m[3];
+      const fyStart = mon >= 4 ? yr : yr - 1;
+      return {fy: `${fyStart}-${fyStart + 1}`, quarter: 'Q' + (mon >= 10 ? 3 : mon >= 7 ? 2 : mon >= 4 ? 1 : 4)};
+    }
+    function monthLabel(slash) {
+      const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(slash || ''));
+      if (!m || +m[2] < 1 || +m[2] > 12) return '';
+      return ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][+m[2] - 1] + ' ' + m[3];
+    }
+
+    // The bulk-upload CSV: one record per deductee, in table order (month by month). Date of
+    // payment/credit, date of deduction and date of deposit all take the group's BIN date — the same
+    // convention the RPU / FVU output uses for these book-entry (BIN) deductions. Tax is shown as
+    // deposited in full (Yes, deposited = deducted); the reason / certificate columns stay empty.
+    function buildOnlineTemplate(challans, section) {
+      const rows = [], groups = [];
+      let sl = 0;
+      (challans || []).forEach(ch => {
+        if (!ch.deductees.length) return;
+        const date = String(ch.tv_date_slash || '').trim();
+        const first = sl + 1;
+        let total = 0;
+        ch.deductees.forEach(p => {
+          sl++;
+          total += Number(p.tds) || 0;
+          rows.push({
+            sl, pan: String(p.pan || '').trim().toUpperCase(), name: sanitizeFreeText(p.name).toUpperCase(),
+            section, date, taxable: Number(p.taxable) || 0, tds: Number(p.tds) || 0, group: groups.length,
+          });
+        });
+        groups.push({date, first, last: sl, count: ch.deductees.length, total, receipt: ch.receipt_no || '', ddo: ch.ddo_serial || ''});
+      });
+      const csv = ONLINE_TEMPLATE_HEAD + rows.map(r => [
+        r.sl, r.pan, r.name, '', r.section, r.date, r.date, fmtNum(r.taxable), fmtNum(r.tds), 'Yes', fmtNum(r.tds), r.date, '', '',
+      ].map(csvCell).join(',') + '\r\n').join('');
+      return {csv, rows, groups};
+    }
+
+    // Things worth a second look before the file goes to TRACES. Warnings only — nothing blocks the download.
+    function onlineChecks(built, sparkPeriod) {
+      const w = [];
+      const {rows, groups} = built;
+      if (!rows.length) return ['There are no deductee rows yet — add them in the table above.'];
+      if (rows.length > ONLINE_ROW_LIMIT) {
+        w.push(`This return has ${rows.length} deductee records, but TRACES online preparation supports only up to ${ONLINE_ROW_LIMIT}. Use the Offline route (RPU / FVU) for this return.`);
+      }
+      const issues = [];
+      rows.forEach(r => {
+        if (!PAN_RE.test(r.pan)) issues.push(`Sl. ${r.sl}: PAN "${r.pan}" is missing or not in the AAAAA9999A format.`);
+        if (!r.name) issues.push(`Sl. ${r.sl}: the name is blank.`);
+        if (!(r.tds > 0)) issues.push(`Sl. ${r.sl}: TDS is ${fmtNum(r.tds)}.`);
+        if (!(r.taxable > 0)) issues.push(`Sl. ${r.sl}: the amount paid or credited is ${fmtNum(r.taxable)}.`);
+        else if (r.tds > r.taxable) issues.push(`Sl. ${r.sl}: TDS (${fmtNum(r.tds)}) is more than the amount paid (${fmtNum(r.taxable)}).`);
+      });
+      groups.forEach(g => {
+        if (!isRealDate(g.date)) issues.push(`Sl. ${g.first}–${g.last}: the BIN date "${g.date}" is not a valid DD/MM/YYYY date.`);
+      });
+      issues.slice(0, 8).forEach(m => w.push(m));
+      if (issues.length > 8) w.push(`…and ${issues.length - 8} more like these.`);
+
+      // A statement covers one quarter: all dates must sit in one, and in the one SPARK printed.
+      const seen = {};
+      groups.forEach(g => {const p = periodOfSlashDate(g.date); if (p) seen[p.fy + ' ' + p.quarter] = true;});
+      const periods = Object.keys(seen);
+      if (periods.length > 1) {
+        w.push(`The BIN dates fall in more than one quarter (${periods.join(', ')}) — one statement covers a single quarter, so check the dates.`);
+      } else if (periods.length === 1 && sparkPeriod) {
+        const want = normalizeYearRange(sparkPeriod.fy) + ' ' + sparkPeriod.quarter;
+        if (periods[0] !== want) w.push(`The BIN dates are in ${periods[0]}, but the SPARK file is for ${want}. Make sure you select the right quarter on TRACES.`);
+      }
+      return w;
+    }
+
+    function onlineFilename(date, quarter) {
+      const hh = String(date.getHours()).padStart(2, '0');
+      const mm = String(date.getMinutes()).padStart(2, '0');
+      const ss = String(date.getSeconds()).padStart(2, '0');
+      return 'BulkUpload' + (/^Q[1-4]$/.test(quarter) ? quarter : '') + hh + mm + ss + '.csv';
+    }
+    // What the rows looked like when the template was made — if they change afterwards the download is held back.
+    function onlineSignature() {
+      return JSON.stringify([el('o_section').value, (challans || []).map(c => [c.tv_date_slash, c.deductees.map(p => [p.pan, p.name, p.taxable, p.tds])])]);
+    }
+
+    function renderOnlinePanel(built, warnings, fileName, section) {
+      const {rows, groups} = built;
+      const total = rows.reduce((s, r) => s + r.tds, 0);
+      el('onlineWarnings').innerHTML = warnings.length
+        ? '<div class="warn-box"><b>Check before uploading:</b><br>' + warnings.map(m => '• ' + escHtml(m)).join('<br>') + '</div>'
+        : '';
+      el('onlineSummary').innerHTML = `✓ Template ready — <b>${rows.length}</b> deductee record${rows.length === 1 ? '' : 's'} in ${groups.length} BIN group${groups.length === 1 ? '' : 's'} · Section ${escHtml(section)} · total TDS ₹${fmtAmt(total)}`;
+      el('fnameOnline').textContent = fileName;
+
+      const fy = el('f_fy_hyphen').value.trim(), q = el('f_quarter').value.trim();
+      const sd = (sparkData && sparkData.deductor) || {};
+      const guessed = el('periodNote').style.display !== 'none' ? el('periodNote').textContent : '';
+      el('onlinePeriod').innerHTML = `TRACES-ൽ തിരഞ്ഞെടുക്കേണ്ടത്: <b>Form 138 · Tax Year ${escHtml(fy || '?')} · ${escHtml(q || '?')} · Regular · Prepare &amp; File Online</b>` +
+        (sd.tan ? `<br>SPARK ഫയലിലെ TAN <b>${escHtml(sd.tan)}</b> — ഇതേ TAN ഉപയോഗിച്ചാണ് TRACES-ൽ ലോഗിൻ ചെയ്യേണ്ടത്.` : '') +
+        (guessed ? `<br><span style="color:var(--warn);">${escHtml(guessed)}</span>` : '');
+
+      el('mapGuide').innerHTML = '<table class="recon guide"><tr><th>Sl. No.</th><th>BIN date</th><th>BIN</th><th>Rows</th><th>TDS total ₹</th></tr>' +
+        groups.map(g => `<tr><td class="num">${g.first === g.last ? g.first : g.first + '–' + g.last}</td><td class="num">${escHtml(g.date)}</td>` +
+          `<td>${g.receipt ? escHtml(g.receipt) + (g.ddo ? ' · DDO ' + escHtml(g.ddo) : '') : '<span class="hint">as shown on TRACES</span>'}</td>` +
+          `<td>${g.count}</td><td class="num">${fmtAmt(g.total)}</td></tr>`).join('') + '</table>';
+    }
+
+    // Row counter, the "BIN date is a guess" note, the template button, and the stale-download guard.
+    function updateOnlineUi() {
+      const rows = challans ? challans.reduce((s, c) => s + c.deductees.length, 0) : 0;
+      const counter = el('rowCounter');
+      counter.textContent = rows + ' / ' + ONLINE_ROW_LIMIT + ' deductee records';
+      counter.className = rows > ONLINE_ROW_LIMIT ? 'hint amt-mismatch' : 'hint';
+      el('btnGenerateOnline').disabled = !challans || rows === 0;
+      const showNote = currentMode === 'online' && !(binEntries && binEntries.length) && !!challans && challans.length > 0;
+      const note = el('onlineDateNote');
+      note.style.display = showNote ? '' : 'none';
+      if (showNote) note.innerHTML = 'BIN file ചേർത്തിട്ടില്ലാത്തതിനാൽ ഓരോ വിഭാഗത്തിലെയും <b>BIN date</b> മാസാവസാനമായി ഊഹിച്ചതാണ്. TRACES-ൽ BIN import ചെയ്യുമ്പോൾ കാണുന്ന തീയതി വേറെയാണെങ്കിൽ ഇവിടെ തിരുത്തുക (അല്ലെങ്കിൽ മുകളിൽ BIN ഫയൽ ചേർക്കുക).';
+      if (onlineSig !== null) {
+        const stale = onlineSignature() !== onlineSig;
+        el('dlOnline').disabled = stale;
+        el('onlineStale').style.display = stale ? '' : 'none';
+      }
+    }
+
+    el('btnGenerateOnline').addEventListener('click', () => {
+      const section = el('o_section').value;
+      const built = buildOnlineTemplate(challans, section);
+      const sd = (sparkData && sparkData.deductor) || {};
+      const sparkPeriod = fyIsValid(sd.fy_hyphen) && /^Q[1-4]$/.test(sd.quarter || '') ? {fy: sd.fy_hyphen, quarter: sd.quarter} : null;
+      const fileName = onlineFilename(new Date(), el('f_quarter').value.trim());
+      renderOnlinePanel(built, onlineChecks(built, sparkPeriod), fileName, section);
+      el('dlOnline').onclick = () => downloadText(fileName, built.csv);
+      onlineSig = onlineSignature();
+      el('dlOnline').disabled = false;
+      el('onlineStale').style.display = 'none';
+      enableStep(5);
+      el('step5').scrollIntoView({behavior: 'smooth', block: 'start'});
+    });
+    el('o_section').addEventListener('change', updateOnlineUi);
+
+    // Online asks before a new BIN / SPARK file rebuilds a table the user has already worked on.
+    function okToRebuild() {
+      if (currentMode !== 'online' || !tableTouched) return true;
+      return window.confirm('Reading a new file rebuilds the table below, and the rows you added, edited or imported by hand will be lost. Continue?');
+    }
+
+    // Online: SPARK first, BIN optional, no deductor form. Offline: the five original steps, unchanged.
+    const MODE_STEPS = {
+      online: ['step2', 'step1', 'step4', 'step5'],
+      offline: ['step1', 'step2', 'step3', 'step4', 'step5'],
+    };
+    function applyModeLayout() {
+      const shown = MODE_STEPS[currentMode];
+      ['step1', 'step2', 'step3', 'step4', 'step5'].forEach(id => {
+        const node = el(id);
+        const idx = shown.indexOf(id);
+        node.classList.toggle('mode-hidden', idx < 0);
+        node.style.order = idx < 0 ? '' : String(idx + 1);
+        const num = node.querySelector('h2 .num');
+        if (num && idx >= 0) num.textContent = String(idx + 1);
+      });
+    }
+    function setMode(mode, persist) {
+      currentMode = mode === 'offline' ? 'offline' : 'online';
+      document.body.setAttribute('data-mode', currentMode);
+      el('modeOnline').checked = currentMode === 'online';
+      el('modeOffline').checked = currentMode === 'offline';
+      el('modeOptOnline').classList.toggle('active', currentMode === 'online');
+      el('modeOptOffline').classList.toggle('active', currentMode === 'offline');
+      applyModeLayout();
+      if (binSkipped && binEntries && !binEntries.length) setStatus('binStatus', currentMode === 'online' ? BIN_MSG_ONLINE : BIN_MSG_OFFLINE, 'ok');
+      // A SPARK file read while Offline (BIN still pending) is all the Online route needs — but never
+      // rebuild a table that is already there just because the route was switched.
+      if (currentMode === 'online' && sparkData && !binEntries && !(challans && challans.length)) maybeProceed();
+      // Step 5 belongs to whichever route made something to download.
+      el('step5').classList.toggle('disabled', currentMode === 'online' ? onlineSig === null : !offlineGenerated);
+      if (challans && challans.length && binEntries && !binEntries.length && /^<div class="ok-box">Built /.test(reconOkHtml)) reconOkHtml = builtNoteHtml();
+      if (challans) renderChallanTable(); else updateOnlineUi();
+      if (persist) {
+        try {localStorage.setItem('rpuSidekickMode', currentMode);} catch (err) {}
+        try {history.replaceState(null, '', '#' + currentMode);} catch (err) {} // so a reload keeps the route just chosen
+      }
+    }
+    el('modeOnline').addEventListener('change', () => setMode('online', true));
+    el('modeOffline').addEventListener('change', () => setMode('offline', true));
+
+    // ============================================================
     // UI WIRING
     // ============================================================
     function enableStep(n) {el('step' + n).classList.remove('disabled');}
@@ -1675,6 +2123,7 @@
     el('binFile').addEventListener('change', async (e) => {
       const file = e.target.files[0];
       if (!file) return;
+      if (!okToRebuild()) {e.target.value = ''; return;}
       setStatus('binStatus', 'Reading…');
       try {
         const ext = file.name.split('.').pop().toLowerCase();
@@ -1697,6 +2146,7 @@
         const excludedNote = excludedCount ? ` (excluded ${excludedCount} Form 140/Non-Salary row${excludedCount > 1 ? 's' : ''})` : '';
         setStatus('binStatus', `Read ${binEntries.length} transfer voucher${binEntries.length > 1 ? 's' : ''}${excludedNote}: ` +
           binEntries.map(b => `${b.receipt_no} (₹${fmtAmt(b.tv_amount)}, ${b.tv_date})`).join('; '), 'ok');
+        binSkipped = false;
         maybeProceed();
       } catch (err) {
         binEntries = null;
@@ -1707,6 +2157,7 @@
     el('sparkFile').addEventListener('change', async (e) => {
       const file = e.target.files[0];
       if (!file) return;
+      if (!okToRebuild()) {e.target.value = ''; return;}
       setStatus('sparkStatus', 'Reading…');
       try {
         const buf = await file.arrayBuffer();
@@ -1718,7 +2169,7 @@
         const sd = sparkData.deductor;
         if (!sparkData.employees.length) throw new Error(sd.tan ? 'Could not find Annexure I deductee rows in this PDF.' : 'Could not find a TAN or Annexure I deductee rows in this PDF — is it the right file?');
         setStatus('sparkStatus', `Read ${sparkData.employees.length} employees${sd.tan ? ' for TAN ' + sd.tan : ''}${sd.fy_hyphen ? ', ' + sd.fy_hyphen : ''}${sd.quarter ? ' ' + sd.quarter : ''}.` +
-          (sd.tan ? '' : " This SPARK report has no TAN in its header — fill it in step 3 (or load a previous quarter's RPU file there)."), 'ok');
+          (sd.tan || currentMode === 'online' ? '' : " This SPARK report has no TAN in its header — fill it in step 3 (or load a previous quarter's RPU file there)."), 'ok');
         fillDeductorForm(sparkData.deductor);
         enableStep(3);
         maybeProceed();
@@ -1730,13 +2181,17 @@
 
     el('skipBin').addEventListener('click', () => {
       binEntries = [];
+      binSkipped = true;
       setStatus('binStatus', "No BIN file — add challans manually in step 4 once you're past step 3.", 'ok');
       maybeProceed();
     });
 
     el('skipSpark').addEventListener('click', () => {
+      if (!okToRebuild()) return;
       sparkData = {deductor: {}, employees: []};
-      setStatus('sparkStatus', 'No SPARK PDF — fill in deductor details below and add deductees manually in step 4.', 'ok');
+      setStatus('sparkStatus', currentMode === 'online'
+        ? 'No SPARK PDF — add each month with "+ Add challan", then add the deductee rows by hand in the table below.'
+        : 'No SPARK PDF — fill in deductor details below and add deductees manually in step 4.', 'ok');
       fillDeductorForm(sparkData.deductor);
       enableStep(3);
       maybeProceed();
@@ -1745,6 +2200,7 @@
     el('btnAddChallan').addEventListener('click', () => {
       if (!challans) challans = [];
       challans.push(blankChallan());
+      tableTouched = true;
       enableStep(4);
       reconWarnings = []; reconOkHtml = ''; // adding a challan by hand clears the reconciliation notes, as before
       renderChallanTable();
@@ -1884,9 +2340,26 @@
       RESP_ADDRESS_IDS.forEach(id => {el(id).disabled = !editable;});
     }
 
+    // The green note above a table that was just built from SPARK's months alone (no BIN file).
+    function builtNoteHtml() {
+      return currentMode === 'online'
+        ? '<div class="ok-box">Built ' + challans.length + ' group(s) from SPARK\'s months — each month stands for one BIN on TRACES.</div>'
+        : '<div class="ok-box">Built ' + challans.length + ' challan(s) from SPARK\'s months — receipt no., DDO serial and exact TV date still need to be filled in from your BIN data.</div>';
+    }
     function maybeProceed() {
+      if (currentMode === 'online' && sparkData && !binEntries) {
+        // Online route: TRACES imports the BIN itself, so the SPARK file alone is enough to build the rows.
+        binEntries = [];
+        binSkipped = true;
+        setStatus('binStatus', BIN_MSG_ONLINE, 'ok');
+      }
       if (binEntries && sparkData) {
         runReconciliation();
+        tableTouched = false; // freshly built — nothing of the user's is in it yet
+        // The rebuilt table has none of the rows that were imported into the old one, so drop those notes too.
+        Object.keys(pensionImportMsg).forEach(k => {delete pensionImportMsg[k];});
+        if (binEntries.length === 0 && challans.length && !reconWarnings.length) reconOkHtml = builtNoteHtml();
+        renderChallanTable();
       }
     }
 
@@ -1989,21 +2462,31 @@
     function renderChallanTable() {
       const tblWrap = el('reconTables');
       tblWrap.innerHTML = '';
+      // Online route with no BIN file: there is no voucher amount to compare a group with, so its
+      // total is simply the total of its rows (it follows every edit and import). Offline markup is unchanged.
+      const onlineNoBin = currentMode === 'online' && !(binEntries && binEntries.length);
       challans.forEach((ch, ci) => {
         const block = document.createElement('div');
         block.className = 'challan-block';
         const sum = ch.deductees.reduce((s, p) => s + p.tds, 0);
+        if (onlineNoBin) ch.tv_amount = sum;
         const mismatch = Math.abs(sum - ch.tv_amount) > 0.01;
+        const monthTag = currentMode === 'online' ? monthLabel(ch.tv_date_slash) : '';
+        const binInputs = onlineNoBin ? '' : `<span class="ch-field-label">Receipt</span><input data-ch="${ci}" data-f="receipt_no" value="${ch.receipt_no}" style="width:78px;">
+          <span class="ch-field-label">DDO Sl.</span><input data-ch="${ci}" data-f="ddo_serial" value="${ch.ddo_serial}" style="width:54px;">`;
+        const totalInputs = onlineNoBin
+          ? `<span class="ch-field-label">Total ₹</span><input data-ch="${ci}" data-f="tv_amount" value="${fmtAmt(sum)}" style="width:76px;" readonly>
+          <span>· ${ch.deductees.length} row${ch.deductees.length === 1 ? '' : 's'}</span>`
+          : `<span class="ch-field-label">TV amount ₹</span><input data-ch="${ci}" data-f="tv_amount" value="${fmtAmt(ch.tv_amount)}" style="width:76px;">
+          <span class="${mismatch ? 'amt-mismatch' : ''}">· deductee total ₹${fmtAmt(sum)}${mismatch ? ' ⚠' : ''}</span>`;
         block.innerHTML = `
       <div class="challan-head">
         <span>
-          <span class="ch-field-label">Receipt</span><input data-ch="${ci}" data-f="receipt_no" value="${ch.receipt_no}" style="width:78px;">
-          <span class="ch-field-label">DDO Sl.</span><input data-ch="${ci}" data-f="ddo_serial" value="${ch.ddo_serial}" style="width:54px;">
-          <span class="ch-field-label">TV date</span><input data-ch="${ci}" data-f="tv_date_slash" value="${ch.tv_date_slash}" placeholder="DD/MM/YYYY" style="width:92px;">
+          ${monthTag ? `<b>${monthTag}</b>&nbsp; ` : ''}${binInputs}
+          <span class="ch-field-label">${onlineNoBin ? 'BIN date' : 'TV date'}</span><input data-ch="${ci}" data-f="tv_date_slash" value="${ch.tv_date_slash}" placeholder="DD/MM/YYYY" style="width:92px;">
         </span>
         <span>
-          <span class="ch-field-label">TV amount ₹</span><input data-ch="${ci}" data-f="tv_amount" value="${fmtAmt(ch.tv_amount)}" style="width:76px;">
-          <span class="${mismatch ? 'amt-mismatch' : ''}">· deductee total ₹${fmtAmt(sum)}${mismatch ? ' ⚠' : ''}</span>
+          ${totalInputs}
           <button type="button" class="link-btn danger" data-remove-challan="${ci}">✕ Remove challan</button>
         </span>
       </div>
@@ -2042,6 +2525,7 @@
 
       tblWrap.querySelectorAll('table.recon input').forEach(inp => {
         inp.addEventListener('change', () => {
+          tableTouched = true;
           const ch = challans[inp.dataset.ch];
           const p = ch.deductees[inp.dataset.p];
           if (inp.dataset.f === 'taxable' || inp.dataset.f === 'tds') p[inp.dataset.f] = parseFloat(inp.value) || 0;
@@ -2051,6 +2535,7 @@
       });
       tblWrap.querySelectorAll('.challan-head input').forEach(inp => {
         inp.addEventListener('change', () => {
+          tableTouched = true;
           const ch = challans[inp.dataset.ch];
           if (inp.dataset.f === 'tv_amount') ch.tv_amount = parseFloat(inp.value) || 0;
           else if (inp.dataset.f === 'tv_date_slash') {
@@ -2062,6 +2547,7 @@
       });
       tblWrap.querySelectorAll('[data-remove-deductee]').forEach(btn => {
         btn.addEventListener('click', () => {
+          tableTouched = true;
           const [ci, pi] = btn.dataset.removeDeductee.split(':');
           challans[ci].deductees.splice(pi, 1);
           renderChallanTable();
@@ -2069,6 +2555,7 @@
       });
       tblWrap.querySelectorAll('.add-deductee-select').forEach(sel => {
         sel.addEventListener('change', () => {
+          tableTouched = true;
           const ch = challans[sel.dataset.ch];
           if (sel.value === '__blank__') {
             ch.deductees.push(blankDeductee());
@@ -2088,6 +2575,7 @@
       });
       tblWrap.querySelectorAll('[data-remove-challan]').forEach(btn => {
         btn.addEventListener('click', () => {
+          tableTouched = true;
           challans.splice(btn.dataset.removeChallan, 1);
           renderChallanTable();
         });
@@ -2097,6 +2585,7 @@
           const ci = inp.dataset.ch;
           const file = inp.files[0];
           if (!file) return;
+          tableTouched = true;
           try {
             const text = await file.text();
             const {deductees, skipped} = parsePensionCSV(text);
@@ -2120,6 +2609,7 @@
 
       renderReconBox();
       el('btnGenerate').disabled = challans.length === 0;
+      updateOnlineUi();
     }
 
     el('btnGenerate').addEventListener('click', () => {
@@ -2178,6 +2668,7 @@
       el('dlA').onclick = () => downloadText(fnameAFinal, outA);
       el('dlB').onclick = () => downloadText(fnameBFinal, outB);
 
+      offlineGenerated = true;
       enableStep(5);
     });
 
@@ -2194,6 +2685,18 @@
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       URL.revokeObjectURL(url);
     }
+
+    // Start on the route saved from the last visit, else Online. A link ending in #offline or #online wins.
+    (function initMode() {
+      let m = 'online';
+      try {
+        const saved = localStorage.getItem('rpuSidekickMode');
+        if (saved === 'online' || saved === 'offline') m = saved;
+      } catch (err) {}
+      const h = (location.hash || '').toLowerCase();
+      if (h === '#offline') m = 'offline'; else if (h === '#online') m = 'online';
+      setMode(m, false);
+    })();
   </script>
 </body>
 
