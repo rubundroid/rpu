@@ -969,6 +969,35 @@
     }
 
     // ============================================================
+    // TREASURY PENSION CSV — bulk-import deductees into a manually
+    // added challan (separate TAN from SPARK; not wired into Steps
+    // 1-3, used only via the per-challan import control in Step 4).
+    // Columns: Sl.No, Pension Type, Pensioner Code, PPO Number,
+    // Pensioner Name, DOB, PAN, Gross amount, TDS, Net amount.
+    // Only rows with TDS > 0 and a validly-formatted PAN become
+    // deductees — the file is typically a few thousand pensioners
+    // with a handful actually having any tax deducted.
+    // ============================================================
+    const PAN_RE = /^[A-Z]{5}\d{4}[A-Z]$/;
+    function parsePensionCSV(text) {
+      const parsed = Papa.parse(text, {header: false, skipEmptyLines: true});
+      const rows = parsed.data.slice(1); // drop header row
+      const deductees = [];
+      let skipped = 0;
+      for (const r of rows) {
+        const tds = parseFloat(r[8]);
+        if (!tds || tds <= 0) continue; // no TDS — not a deductee for this return
+        const pan = String(r[6] || '').trim().toUpperCase();
+        if (!PAN_RE.test(pan)) { skipped++; continue; } // e.g. the trailing "Total" row, or a pensioner with no PAN on file
+        deductees.push({
+          pan, name: sanitizeFreeText(String(r[4] || '')).toUpperCase(),
+          taxable: parseFloat(r[7]) || 0, tds,
+        });
+      }
+      return {deductees, skipped};
+    }
+
+    // ============================================================
     // SPARK PDF PARSER
     // ============================================================
     // Reconstructs a pdftotext-layout-like text blob (line-grouped by Y,
@@ -1769,6 +1798,7 @@
       return {pan: '', name: '', taxable: 0, tds: 0};
     }
 
+    const pensionImportMsg = {}; // {challanIndex: statusText}, survives renderChallanTable() redraws
     function renderChallanTable() {
       const tblWrap = el('reconTables');
       tblWrap.innerHTML = '';
@@ -1809,7 +1839,17 @@
             ? sparkData.employees.map((emp, ei) => `<option value="${ei}">${emp.pan} — ${sanitizeFreeText(emp.name).toUpperCase()}</option>`).join('')
             : ''}
         </select>
-      </div>`;
+      </div>
+      <details class="howto"${pensionImportMsg[ci] ? ' open' : ''}>
+        <summary>Import from Treasury Pension CSV</summary>
+        <div class="howto-body">
+          Adds every pensioner with TDS &gt; 0 from that month's statement as a deductee here (PAN, name, gross amount, TDS). Rows with no tax or no valid PAN on file are left out — add those by hand if needed.
+          <div class="small-btn-row" style="margin:8px 0 0;">
+            <input type="file" class="pension-csv-input" data-ch="${ci}" accept=".csv">
+          </div>
+          <div class="status-line pension-import-status" data-ch="${ci}">${pensionImportMsg[ci] || ''}</div>
+        </div>
+      </details>`;
         tblWrap.appendChild(block);
       });
 
@@ -1862,6 +1902,27 @@
       tblWrap.querySelectorAll('[data-remove-challan]').forEach(btn => {
         btn.addEventListener('click', () => {
           challans.splice(btn.dataset.removeChallan, 1);
+          renderChallanTable();
+        });
+      });
+      tblWrap.querySelectorAll('.pension-csv-input').forEach(inp => {
+        inp.addEventListener('change', async () => {
+          const ci = inp.dataset.ch;
+          const file = inp.files[0];
+          if (!file) return;
+          try {
+            const text = await file.text();
+            const {deductees, skipped} = parsePensionCSV(text);
+            if (!deductees.length) {
+              pensionImportMsg[ci] = 'No rows with TDS > 0 found in this file.';
+            } else {
+              challans[ci].deductees.push(...deductees);
+              pensionImportMsg[ci] = `Imported ${deductees.length} pensioner(s) with TDS — ₹${fmtAmt(deductees.reduce((s, p) => s + p.tds, 0))} total.` +
+                (skipped ? ` (${skipped} skipped — missing/invalid PAN; add those by hand if needed.)` : '');
+            }
+          } catch (err) {
+            pensionImportMsg[ci] = 'Could not read this file — ' + err.message;
+          }
           renderChallanTable();
         });
       });
