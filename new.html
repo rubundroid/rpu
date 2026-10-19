@@ -560,6 +560,7 @@
           <div class="needs-input"><label class="field-label">Receipt no. of original return</label><input
               id="f_provisional_receipt_no" placeholder="blank = original filing"></div>
         </div>
+        <div class="warn-box" id="periodNote" style="display:none; margin:10px 0 0;"></div>
       </fieldset>
 
       <fieldset>
@@ -1086,25 +1087,45 @@
       return "";
     }
     function fieldAfter(label, block) {
-      const re = new RegExp(escapeRe(label) + "\\s+(.+)");
+      // Same line only. A blank SPARK field (label with nothing after it) must
+      // come back blank — with \s+ it ran on into the NEXT line and returned
+      // the next label ("Area/location", "Telephone No." …) as if it were the value.
+      const re = new RegExp(escapeRe(label) + "[ \\t]+(.+)");
       const m = block.match(re);
       return m ? m[1].trim() : "";
     }
     function escapeRe(s) {return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');}
 
     function parseSparkText(text) {
-      const tan = (text.match(/Tax Deduction Account No\.\s+(\S+)/) || [, ''])[1];
-      const deductorPan = (text.match(/Permanent Account No\.\s+(\S+)/) || [, 'PANNOTREQD'])[1];
-      const fy = (text.match(/Financial year\s+([\d\-]+)/) || [, ''])[1];
-      const ay = (text.match(/Assesment year\s+([\d\-]+)/) || [, ''])[1];
+      // Header values are read from the SAME LINE as their label ([ \t]+, not
+      // \s+). Some SPARK reports print the whole header blank (no TAN, PAN,
+      // year or names); \s+ then ran on into the next line and picked up the
+      // next label — TAN "(b)", PAN "(c)" — as if it were the value.
+      const tan = (text.match(/Tax Deduction Account No\.[ \t]+(\S+)/) || [, ''])[1];
+      const deductorPan = (text.match(/Permanent Account No\.[ \t]+(\S+)/) || [, 'PANNOTREQD'])[1];
+      // The same report can print a lone "-" for the Financial/Assessment
+      // year, so only a real range ("2026-2027" / "2026-27") counts.
+      const fyPrinted = (text.match(/Financial year[ \t]+(\d{4}-\d{2,4})/) || [, ''])[1];
+      const ay = (text.match(/Assess?ment year[ \t]+(\d{4}-\d{2,4})/) || [, ''])[1];
 
       // "...quarter ended June 2026" -> Q1 (Indian FY quarters: Q1 Apr-Jun,
       // Q2 Jul-Sep, Q3 Oct-Dec, Q4 Jan-Mar).
       const QUARTER_BY_END_MONTH = {
         June: 'Q1', September: 'Q2', December: 'Q3', March: 'Q4'
       };
-      const quarterMatch = text.match(/quarter ended (\w+) \d{4}/);
+      const quarterMatch = text.match(/quarter ended (\w+)\s+(\d{4})/);
       const quarter = quarterMatch ? (QUARTER_BY_END_MONTH[quarterMatch[1]] || '') : '';
+
+      // No usable Financial year printed? The statement's own "quarter ended
+      // <Month> <Year>" line still pins it down: Jun/Sep/Dec 2026 -> FY 2026-2027,
+      // March 2027 -> FY 2026-2027 too (the FY started the year before).
+      let fy = fyPrinted, fyDerived = false;
+      if (!fy && quarter) {
+        const endYear = parseInt(quarterMatch[2], 10);
+        const startYear = quarter === 'Q4' ? endYear - 1 : endYear;
+        fy = `${startYear}-${startYear + 1}`;
+        fyDerived = true;
+      }
 
       // SPARK's own Form 138 prints this exact Yes/No answer (matches the RPU
       // data-entry screen's "Has the statement been filed earlier..." field).
@@ -1113,7 +1134,7 @@
 
       const addrMatch = text.match(/\(d\)\s+Address\s+([\s\S]*?)3\.\s*Particulars/);
       const addrBlock = addrMatch ? addrMatch[1] : "";
-      const deductorNameMatch = text.match(/\(d\)\s+Address\s+(.+)/);
+      const deductorNameMatch = text.match(/\(d\)\s+Address[ \t]+(.+)/);
       const deductorName = deductorNameMatch ? sanitizeFreeText(deductorNameMatch[1]).toUpperCase() : "";
       const road = fieldAfter("Road/street/lane", addrBlock);
       const area = fieldAfter("Area/location", addrBlock);
@@ -1122,7 +1143,7 @@
 
       const respMatch = text.match(/3\.\s*Particulars of person responsible[\s\S]*?\n([\s\S]*?)4\.\s*Details of tax deducted/);
       const respBlock = respMatch ? respMatch[1] : "";
-      const respNameMatch = respBlock.match(/\(a\)\s+Name\s+(.+)/);
+      const respNameMatch = respBlock.match(/\(a\)[ \t]+Name[ \t]+(.+)/);
       const respName = respNameMatch ? sanitizeFreeText(respNameMatch[1]).toUpperCase() : "";
       const respRoad = fieldAfter("Road/street/lane", respBlock);
       const respArea = fieldAfter("Area/location", respBlock);
@@ -1166,7 +1187,7 @@
 
       return {
         deductor: {
-          tan, deductor_pan: deductorPan, fy_hyphen: fy, ay_hyphen: ay, quarter, filed_earlier: filedEarlier,
+          tan, deductor_pan: deductorPan, fy_hyphen: fy, fy_derived: fyDerived, ay_hyphen: ay, quarter, filed_earlier: filedEarlier,
           deductor_name: deductorName, road, area, pincode, email,
           resp_name: respName, resp_designation: designation,
           resp_road: respRoad, resp_area: respArea, resp_pincode: respPincode, resp_email: respEmail,
@@ -1543,7 +1564,9 @@
 
     el('f_fy_hyphen').addEventListener('input', () => {
       el('f_ay_hyphen').value = computeAY(el('f_fy_hyphen').value);
+      el('periodNote').style.display = 'none'; // they're editing it themselves now
     });
+    el('f_quarter').addEventListener('input', () => {el('periodNote').style.display = 'none';});
 
     function autoFillMobileCode(phoneId, stdId) {
       el(phoneId).addEventListener('input', () => {
@@ -1641,9 +1664,13 @@
         const buf = await file.arrayBuffer();
         const layoutText = await extractLayoutText(buf);
         sparkData = parseSparkText(layoutText);
-        if (!sparkData.deductor.tan) throw new Error('Could not find a TAN in this PDF — is it the right file?');
-        if (!sparkData.employees.length) throw new Error('Could not find Annexure I deductee rows in this PDF.');
-        setStatus('sparkStatus', `Read ${sparkData.employees.length} employees for TAN ${sparkData.deductor.tan}, ${sparkData.deductor.fy_hyphen} ${sparkData.deductor.quarter || ''}.`, 'ok');
+        // Some SPARK reports print the whole header blank (no TAN, PAN, year,
+        // names) — fine as long as the Annexure I rows are there; the TAN etc.
+        // then come from a previous-quarter file or are typed in (step 3).
+        const sd = sparkData.deductor;
+        if (!sparkData.employees.length) throw new Error(sd.tan ? 'Could not find Annexure I deductee rows in this PDF.' : 'Could not find a TAN or Annexure I deductee rows in this PDF — is it the right file?');
+        setStatus('sparkStatus', `Read ${sparkData.employees.length} employees${sd.tan ? ' for TAN ' + sd.tan : ''}${sd.fy_hyphen ? ', ' + sd.fy_hyphen : ''}${sd.quarter ? ' ' + sd.quarter : ''}.` +
+          (sd.tan ? '' : " This SPARK report has no TAN in its header — fill it in step 3 (or load a previous quarter's RPU file there)."), 'ok');
         fillDeductorForm(sparkData.deductor);
         enableStep(3);
         maybeProceed();
@@ -1701,6 +1728,71 @@
       return currentFilingPeriod(date).quarter;
     }
 
+    // ---- Tax Year / Quarter: use what SPARK printed, otherwise work it out ----
+    // A real, consecutive year range: "2026-2027" or "2026-27" — not "-", not blank.
+    function fyIsValid(s) {
+      const m = /^(\d{4})-(\d{4})$/.exec(normalizeYearRange(String(s || '').trim()));
+      return !!m && parseInt(m[2], 10) === parseInt(m[1], 10) + 1;
+    }
+    // Which quarter / financial year do the BIN vouchers belong to? Every
+    // voucher date falls in one quarter of one FY (Apr-Jun Q1, Jul-Sep Q2,
+    // Oct-Dec Q3, Jan-Mar Q4). The quarter with the most vouchers wins; on a
+    // tie the later one does (the quarter that has just closed — older
+    // leftover vouchers are the usual reason a BIN spans two quarters).
+    function periodFromBin(entries) {
+      const tally = {};
+      for (const e of entries || []) {
+        const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(normalizeDateToSlash((e && e.tv_date) || ''));
+        if (!m) continue;
+        const mon = parseInt(m[2], 10), yr = parseInt(m[3], 10);
+        if (mon < 1 || mon > 12) continue;
+        const fyStart = mon >= 4 ? yr : yr - 1;
+        const q = mon >= 10 ? 3 : mon >= 7 ? 2 : mon >= 4 ? 1 : 4;
+        const key = fyStart * 10 + q;
+        tally[key] = (tally[key] || 0) + 1;
+      }
+      const keys = Object.keys(tally).map(Number);
+      if (!keys.length) return null;
+      keys.sort((a, b) => (tally[b] - tally[a]) || (b - a));
+      const fyStart = Math.floor(keys[0] / 10);
+      return {fy: `${fyStart}-${fyStart + 1}`, quarter: 'Q' + (keys[0] % 10)};
+    }
+    // Order of trust: what SPARK printed (Tax Year; Quarter via its "quarter
+    // ended" line) -> SPARK's "quarter ended <Month> <Year>" line for the year
+    // -> the BIN voucher dates -> today's date (the quarter that just closed).
+    function resolvePeriod(dd, bin, now) {
+      dd = dd || {};
+      const fromBin = periodFromBin(bin);
+      let fy, fySrc;
+      if (fyIsValid(dd.fy_hyphen)) {fy = normalizeYearRange(dd.fy_hyphen.trim()); fySrc = dd.fy_derived ? 'line' : 'spark';}
+      else if (fromBin) {fy = fromBin.fy; fySrc = 'bin';}
+      else {fy = currentFYHyphen(now); fySrc = 'today';}
+      let quarter, qSrc;
+      if (/^Q[1-4]$/.test(dd.quarter || '')) {quarter = dd.quarter; qSrc = 'spark';}
+      else if (fromBin && fromBin.fy === fy) {quarter = fromBin.quarter; qSrc = 'bin';}
+      else {quarter = currentQuarterFromDate(now); qSrc = 'today';}
+      return {fy, quarter, fySrc, qSrc};
+    }
+    function applyPeriodToForm(dd) {
+      const p = resolvePeriod(dd, binEntries, new Date());
+      el('f_fy_hyphen').value = p.fy;
+      el('f_ay_hyphen').value = computeAY(p.fy);
+      el('f_quarter').value = p.quarter;
+      // Say so whenever a value was worked out rather than read from SPARK.
+      const SRC = {
+        line: 'from the "quarter ended …" line of the SPARK report',
+        bin: 'from the BIN voucher dates',
+        today: "assumed from today's date — SPARK and BIN gave no usable dates",
+      };
+      const by = {};
+      if (p.fySrc !== 'spark') (by[p.fySrc] = by[p.fySrc] || []).push('Tax Year ' + p.fy);
+      if (p.qSrc !== 'spark') (by[p.qSrc] = by[p.qSrc] || []).push('Quarter ' + p.quarter);
+      const text = Object.keys(by).map(k => `${by[k].join(' and ')} (${SRC[k]})`).join('; ');
+      const note = el('periodNote');
+      note.textContent = text ? 'Filled in automatically — please check: ' + text + '.' : '';
+      note.style.display = text ? '' : 'none';
+    }
+
     function fillDeductorForm(dd) {
       el('f_tan').value = dd.tan || '';
       el('f_deductor_pan').value = dd.deductor_pan || 'PANNOTREQD';
@@ -1731,10 +1823,7 @@
       el('f_resp_phone').value = '';
       el('f_resp_email').value = dd.resp_email || '';
 
-      const fyValue = dd.fy_hyphen || currentFYHyphen(new Date());
-      el('f_fy_hyphen').value = fyValue;
-      el('f_ay_hyphen').value = dd.ay_hyphen || computeAY(fyValue) || '';
-      el('f_quarter').value = dd.quarter || currentQuarterFromDate(new Date());
+      applyPeriodToForm(dd); // Tax Year, Assessment Year, Quarter
       el('f_filed_earlier').value = dd.filed_earlier || 'No';
       el('f_provisional_receipt_no').value = '';
       if (el('f_resp_same_address').checked) syncRespAddressFromDeductor();
@@ -1795,6 +1884,9 @@
       }
       challans = rec;
       enableStep(4);
+      // Both files are in now, so Tax Year / Quarter can use the BIN dates
+      // when SPARK didn't print them (whichever file was uploaded first).
+      applyPeriodToForm(sparkData && sparkData.deductor);
 
       reconWarnings = warnings;
       if (warnings.length) {
@@ -1991,6 +2083,17 @@
       // here won't break generation, but the filing software will reject the
       // file on import, so flag it clearly before that happens.
       const genWarnings = [];
+      if (!d.tan) {
+        genWarnings.push('TAN is blank — fill it in Part A (or load a previous quarter\'s RPU file in step 3). The file will be rejected without it.');
+      } else if (!/^[A-Za-z]{4}\d{5}[A-Za-z]$/.test(d.tan)) {
+        genWarnings.push(`TAN "${d.tan}" doesn't look valid (expected format: AAAA99999A).`);
+      }
+      if (!fyIsValid(d.fy_hyphen)) {
+        genWarnings.push(`Tax Year "${el('f_fy_hyphen').value.trim()}" isn't a valid year range — write it like 2026-2027. The year fields in the output file would be wrong.`);
+      }
+      if (!/^Q[1-4]$/.test(d.quarter)) {
+        genWarnings.push(`Quarter "${d.quarter}" should be Q1, Q2, Q3 or Q4.`);
+      }
       if (d.resp_pan && !looksLikePan(d.resp_pan)) {
         genWarnings.push(`"${d.resp_pan}" doesn't look like a valid PAN for the responsible person (expected format: AAAAA9999A). This will likely be rejected on import.`);
       }
