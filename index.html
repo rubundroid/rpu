@@ -7,7 +7,7 @@
   <title>RPU SideKick - TDS RPU Reconciliation Tool — Form 138 / 24Q</title>
   <link rel="icon" type="image/png" href="https://rpu.rubundroid.com/logo.png">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/papaparse/5.4.1/papaparse.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <style>
     :root {
@@ -780,6 +780,55 @@
       };
     }
 
+    // CSV text -> array of rows (each an array of strings), blank lines skipped.
+    // Uses PapaParse (loaded from the CDN) when it is there. If that script did
+    // not load — blocked network, CDN problem, wrong link — "Papa is not defined"
+    // used to stop every CSV import, so a small built-in reader takes over.
+    function parseCsvRows(text) {
+      if (typeof Papa !== 'undefined') return Papa.parse(text, {header: false, skipEmptyLines: true}).data;
+      return parseCsvBasic(text);
+    }
+    // Same result as Papa.parse(text, {header:false, skipEmptyLines:true}).data for
+    // ordinary files: quoted fields ("" is a quote; commas and line breaks may sit
+    // inside quotes), CRLF / LF / CR line ends, a leading BOM, and , ; tab | as the
+    // delimiter (whichever is commonest on the first line).
+    function parseCsvBasic(text) {
+      text = String(text == null ? '' : text).replace(/^\uFEFF/, '');
+      const counts = {',': 0, ';': 0, '\t': 0, '|': 0};
+      let p = 0;
+      while (p < text.length && (text[p] === '\n' || text[p] === '\r')) p++;
+      for (let inQ = false; p < text.length; p++) {
+        const c = text[p];
+        if (c === '"') inQ = !inQ;
+        else if (!inQ && (c === '\n' || c === '\r')) break;
+        else if (!inQ && c in counts) counts[c]++;
+      }
+      let delim = ',';
+      for (const d of [';', '\t', '|']) if (counts[d] > counts[delim]) delim = d;
+      const rows = [];
+      let row = [], field = '', inQ = false;
+      for (let i = 0; i < text.length; i++) {
+        const c = text[i];
+        if (inQ) {
+          if (c === '"') {
+            if (text[i + 1] === '"') {field += '"'; i++;} else inQ = false;
+          } else field += c;
+        } else if (c === '"' && field === '') {
+          inQ = true;
+        } else if (c === delim) {
+          row.push(field); field = '';
+        } else if (c === '\n' || c === '\r') {
+          if (c === '\r' && text[i + 1] === '\n') i++;
+          row.push(field); field = '';
+          rows.push(row); row = [];
+        } else {
+          field += c;
+        }
+      }
+      if (field !== '' || row.length) {row.push(field); rows.push(row);}
+      return rows.filter(r => !(r.length === 1 && r[0] === ''));
+    }
+
     function parseBinCSVText(text) {
       // Read positionally (same approach as the XLSX parser below), rather
       // than trusting exact header text — BIN exports have been seen with
@@ -789,8 +838,7 @@
       // regardless of header text, so we skip the header row and read those
       // by position; DDO serial and TV date go through assignBinRow since
       // their own column order isn't consistent (see that function).
-      const parsed = Papa.parse(text, {header: false, skipEmptyLines: true});
-      const rows = parsed.data.slice(1); // drop header row
+      const rows = parseCsvRows(text).slice(1); // drop header row
       return rows.map(r => assignBinRow(r[0], r[1], r[2], r[3], r[4], r[5]))
         .filter(e => e.receipt_no && /^\d+$/.test(e.receipt_no) && !isNaN(e.tv_amount));
     }
@@ -816,6 +864,7 @@
     }
 
     function parseBinXLSXBuffer(buf) {
+      if (typeof XLSX === 'undefined') throw new Error("the Excel reader didn't load (it comes from cdnjs.cloudflare.com, so it needs internet access). Refresh the page and try again, or use the CSV or PDF export of the BIN instead.");
       const wb = XLSX.read(buf, {type: 'array', cellDates: false});
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(ws, {header: 1, raw: true});
@@ -983,8 +1032,7 @@
     // ============================================================
     const PAN_RE = /^[A-Z]{5}\d{4}[A-Z]$/;
     function parsePensionCSV(text) {
-      const parsed = Papa.parse(text, {header: false, skipEmptyLines: true});
-      const rows = parsed.data.slice(1); // drop header row
+      const rows = parseCsvRows(text).slice(1); // drop header row
       const deductees = [];
       let skipped = 0;
       for (const r of rows) {
