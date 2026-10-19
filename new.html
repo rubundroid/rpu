@@ -677,6 +677,8 @@
     let binEntries = null;     // [{receipt_no, ddo_serial, tv_date(DD/MM/YYYY), nature, tv_amount, status}]
     let sparkData = null;      // {deductor:{...}, employees:[{pan,name,entries:[{date_payment,taxable,tds}]}]}
     let challans = null;       // reconciled, editable in the DOM
+    let reconWarnings = [];    // reconcile()'s findings, kept so the top box can be redrawn after every edit (see renderReconBox)
+    let reconOkHtml = '';      // the green note shown instead when reconcile() had nothing to warn about
     const DEDUCTOR_ADDRESS_IDS = ['f_flat_no', 'f_road', 'f_area', 'f_locality_extra', 'f_district', 'f_state_code', 'f_pincode'];
     const RESP_ADDRESS_IDS = ['f_resp_flat_no', 'f_resp_road', 'f_resp_area', 'f_resp_locality_extra', 'f_resp_district', 'f_resp_state_code', 'f_resp_pincode'];
 
@@ -985,16 +987,33 @@
       const deductees = [];
       let skipped = 0;
       for (const r of rows) {
+        if (/total/i.test(String(r[0] || ''))) continue; // the file's trailing "Total" summary row — not a pensioner
         const tds = parseFloat(r[8]);
         if (!tds || tds <= 0) continue; // no TDS — not a deductee for this return
         const pan = String(r[6] || '').trim().toUpperCase();
-        if (!PAN_RE.test(pan)) { skipped++; continue; } // e.g. the trailing "Total" row, or a pensioner with no PAN on file
+        if (!PAN_RE.test(pan)) { skipped++; continue; } // TDS was deducted but no valid PAN on file — reported to the user, never silently dropped
         deductees.push({
           pan, name: sanitizeFreeText(String(r[4] || '')).toUpperCase(),
           taxable: parseFloat(r[7]) || 0, tds,
         });
       }
       return {deductees, skipped};
+    }
+
+    // Importing the same file twice must not add its people twice. A row that is already in the
+    // challan (same PAN, taxable amount and TDS) is left out. Rows are counted rather than just
+    // looked up, so two genuinely identical rows for one person both come in the first time
+    // and both match the second.
+    function splitNewPensioners(existing, incoming) {
+      const key = p => `${p.pan}|${fmtAmt(p.taxable)}|${fmtAmt(p.tds)}`;
+      const have = {};
+      existing.forEach(p => {const k = key(p); have[k] = (have[k] || 0) + 1;});
+      const fresh = [];
+      incoming.forEach(p => {
+        const k = key(p);
+        if (have[k] > 0) have[k]--; else fresh.push(p);
+      });
+      return {fresh, already: incoming.length - fresh.length};
     }
 
     // ============================================================
@@ -1652,7 +1671,7 @@
       if (!challans) challans = [];
       challans.push(blankChallan());
       enableStep(4);
-      el('reconMsgs').innerHTML = '';
+      reconWarnings = []; reconOkHtml = ''; // adding a challan by hand clears the reconciliation notes, as before
       renderChallanTable();
     });
 
@@ -1777,18 +1796,46 @@
       challans = rec;
       enableStep(4);
 
-      const msgBox = el('reconMsgs');
+      reconWarnings = warnings;
       if (warnings.length) {
-        msgBox.innerHTML = '<div class="warn-box"><b>Check these before generating:</b><br>' +
-          warnings.map(w => '• ' + w).join('<br>') + '</div>';
+        reconOkHtml = '';
       } else if (binEntries.length === 0 && challans.length) {
-        msgBox.innerHTML = '<div class="ok-box">Built ' + challans.length + ' challan(s) from SPARK\'s months — receipt no., DDO serial and exact TV date still need to be filled in from your BIN data.</div>';
+        reconOkHtml = '<div class="ok-box">Built ' + challans.length + ' challan(s) from SPARK\'s months — receipt no., DDO serial and exact TV date still need to be filled in from your BIN data.</div>';
       } else if (challans.length) {
-        msgBox.innerHTML = '<div class="ok-box">All BIN transfer vouchers match SPARK\'s Annexure I totals for their month — no mismatches found.</div>';
+        reconOkHtml = '<div class="ok-box">All BIN transfer vouchers match SPARK\'s Annexure I totals for their month — no mismatches found.</div>';
       } else {
-        msgBox.innerHTML = '';
+        reconOkHtml = '';
       }
-      renderChallanTable();
+      renderChallanTable(); // also draws the top box (renderReconBox)
+    }
+
+    // The box above the challans shows what reconcile() found when the files were read — but it is
+    // redrawn after every edit, so a month that has since been made to balance (e.g. by importing
+    // the pension CSVs) drops off instead of staying red.
+    function monthBalanced(mk) {
+      let tv = 0, ded = 0, n = 0;
+      challans.forEach(ch => {
+        if (monthKey(ch.tv_date_slash) !== mk) return;
+        n++;
+        tv += ch.tv_amount;
+        ded += ch.deductees.reduce((s, p) => s + p.tds, 0);
+      });
+      return n > 0 && Math.abs(tv - ded) <= 0.01;
+    }
+    function renderReconBox() {
+      const box = el('reconMsgs');
+      if (!reconWarnings.length) {box.innerHTML = reconOkHtml; return;}
+      // Only reconcile()'s two month-total wordings ("BIN total for YYYY-MM is…" and "…no matching
+      // SPARK month found for YYYY-MM.") can be settled by later entries; every other message stays.
+      const standing = reconWarnings.filter(w => {
+        const m = w.match(/^BIN total for (\d{4}-\d{2}) is |no matching SPARK month found for (\d{4}-\d{2})\.$/);
+        return !(m && monthBalanced(m[1] || m[2]));
+      });
+      const cleared = reconWarnings.length - standing.length;
+      box.innerHTML = standing.length
+        ? '<div class="warn-box"><b>Check these before generating:</b><br>' + standing.map(w => '• ' + w).join('<br>') + '</div>' +
+          (cleared ? `<div class="status-line ok">✓ ${cleared} message(s) cleared — those months now balance.</div>` : '')
+        : '<div class="ok-box">✓ All reconciliation messages cleared — the flagged months now balance against their BIN transfer vouchers.</div>';
     }
 
     function blankChallan() {
@@ -1843,7 +1890,7 @@
       <details class="howto"${pensionImportMsg[ci] ? ' open' : ''}>
         <summary>Import from Treasury Pension CSV</summary>
         <div class="howto-body">
-          Adds every pensioner with TDS &gt; 0 from that month's statement as a deductee here (PAN, name, gross amount, TDS). Rows with no tax or no valid PAN on file are left out — add those by hand if needed.
+          Adds every pensioner with TDS &gt; 0 from that month's statement as a deductee here (PAN, name, gross amount, TDS). Rows with no tax or no valid PAN on file are left out — add those by hand if needed. Safe to repeat: rows already in this challan are not added twice.
           <div class="small-btn-row" style="margin:8px 0 0;">
             <input type="file" class="pension-csv-input" data-ch="${ci}" accept=".csv">
           </div>
@@ -1916,8 +1963,12 @@
             if (!deductees.length) {
               pensionImportMsg[ci] = 'No rows with TDS > 0 found in this file.';
             } else {
-              challans[ci].deductees.push(...deductees);
-              pensionImportMsg[ci] = `Imported ${deductees.length} pensioner(s) with TDS — ₹${fmtAmt(deductees.reduce((s, p) => s + p.tds, 0))} total.` +
+              const {fresh, already} = splitNewPensioners(challans[ci].deductees, deductees);
+              challans[ci].deductees.push(...fresh);
+              pensionImportMsg[ci] = (fresh.length
+                ? `Imported ${fresh.length} pensioner(s) with TDS — ₹${fmtAmt(fresh.reduce((s, p) => s + p.tds, 0))} total.`
+                : `Nothing new — all ${already} pensioner(s) with TDS in this file are already in this challan.`) +
+                (fresh.length && already ? ` (${already} already here, left out.)` : '') +
                 (skipped ? ` (${skipped} skipped — missing/invalid PAN; add those by hand if needed.)` : '');
             }
           } catch (err) {
@@ -1927,6 +1978,7 @@
         });
       });
 
+      renderReconBox();
       el('btnGenerate').disabled = challans.length === 0;
     }
 
