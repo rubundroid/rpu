@@ -322,6 +322,11 @@
       margin: 6px 0 14px;
     }
 
+    /* a deductee row with no tax (TDS 0): shown quieter than the taxed rows */
+    table.recon tr.zero-row td input {
+      color: var(--ink-soft);
+    }
+
     .warn-box {
       background: var(--warn-bg);
       color: var(--warn);
@@ -772,6 +777,19 @@
       <div id="reconTables"></div>
       <div class="small-btn-row add-row-btn">
         <button type="button" class="secondary" id="btnAddChallan">+ Add challan</button>
+      </div>
+      <!-- Optional: employees SPARK lists with TDS 0. Shown only when a SPARK file has been read. -->
+      <div id="zeroTaxRow" style="display:none; margin:0 0 14px;">
+        <div class="small-btn-row" style="margin-top:0;">
+          <button type="button" class="secondary" id="btnAddZeroTax">+ Add zero-TDS employees</button>
+        </div>
+        <p class="hint" style="margin:4px 0 0;">
+          <span class="only-online">SPARK-ൽ TDS ₹0 ഉള്ള ജീവനക്കാരെയും റിട്ടേണിൽ ഉൾപ്പെടുത്തണമെങ്കിൽ മാത്രം ഉപയോഗിക്കുക. ഓരോ വരിയും അതത് മാസത്തെ വിഭാഗത്തിൽ ചേരും;
+            deduction / deposit തീയതികൾ ഉണ്ടാകില്ല. Online-ൽ ആകെ 200 വരി വരെ മാത്രമേ പറ്റൂ — അതിൽ കൂടുതൽ വരുമെങ്കിൽ Offline route ഉപയോഗിക്കുക.</span>
+          <span class="only-offline">Only if you also want the employees SPARK lists with TDS ₹0 in the return. Each row goes into its own month's challan and is
+            written without a date of deduction or deposit.</span>
+        </p>
+        <div class="status-line ok" id="zeroTaxStatus" style="display:none;"></div>
       </div>
       <div class="small-btn-row only-offline">
         <button id="btnGenerate" disabled>Generate output files</button>
@@ -1237,17 +1255,31 @@
     // Pensioner Name, DOB, PAN, Gross amount, TDS, Net amount.
     // Only rows with TDS > 0 and a validly-formatted PAN become
     // deductees — the file is typically a few thousand pensioners
-    // with a handful actually having any tax deducted.
+    // with a handful actually having any tax deducted. When the user
+    // ticks "also add pensioners with no tax" (opts.includeZero), the
+    // rows with TDS 0 come back separately (zeros): valid PAN and an
+    // amount above 0, as the file format requires.
     // ============================================================
     const PAN_RE = /^[A-Z]{5}\d{4}[A-Z]$/;
-    function parsePensionCSV(text) {
+    function parsePensionCSV(text, opts) {
+      const includeZero = !!(opts && opts.includeZero);
       const rows = parseCsvRows(text).slice(1); // drop header row
-      const deductees = [];
-      let skipped = 0;
+      const deductees = [], zeros = [];
+      let skipped = 0, zeroSkipped = 0;
       for (const r of rows) {
         if (/total/i.test(String(r[0] || ''))) continue; // the file's trailing "Total" summary row — not a pensioner
         const tds = parseFloat(r[8]);
-        if (!tds || tds <= 0) continue; // no TDS — not a deductee for this return
+        if (!tds || tds <= 0) {
+          // no TDS — not a deductee for this return, unless the user asked for the ones with no tax as well
+          if (includeZero && !(tds < 0)) {
+            const gross = parseFloat(r[7]) || 0, zpan = String(r[6] || '').trim().toUpperCase();
+            if (gross > 0) {
+              if (PAN_RE.test(zpan)) zeros.push({pan: zpan, name: sanitizeFreeText(String(r[4] || '')).toUpperCase(), taxable: gross, tds: 0});
+              else zeroSkipped++;
+            }
+          }
+          continue;
+        }
         const pan = String(r[6] || '').trim().toUpperCase();
         if (!PAN_RE.test(pan)) { skipped++; continue; } // TDS was deducted but no valid PAN on file — reported to the user, never silently dropped
         deductees.push({
@@ -1255,15 +1287,15 @@
           taxable: parseFloat(r[7]) || 0, tds,
         });
       }
-      return {deductees, skipped};
+      return {deductees, skipped, zeros, zeroSkipped};
     }
 
     // Importing the same file twice must not add its people twice. A row that is already in the
-    // challan (same PAN, taxable amount and TDS) is left out. Rows are counted rather than just
-    // looked up, so two genuinely identical rows for one person both come in the first time
-    // and both match the second.
+    // challan (same PAN, taxable amount and TDS — and own payment date, when it has one) is left
+    // out. Rows are counted rather than just looked up, so two genuinely identical rows for one
+    // person both come in the first time and both match the second.
     function splitNewPensioners(existing, incoming) {
-      const key = p => `${p.pan}|${fmtAmt(p.taxable)}|${fmtAmt(p.tds)}`;
+      const key = p => `${p.pan}|${fmtAmt(p.taxable)}|${fmtAmt(p.tds)}${p.dop ? '|' + p.dop : ''}`;
       const have = {};
       existing.forEach(p => {const k = key(p); have[k] = (have[k] || 0) + 1;});
       const fresh = [];
@@ -1905,6 +1937,70 @@
     }
 
     // ============================================================
+    // ZERO-TDS EMPLOYEES — optional extra rows
+    // ============================================================
+    // SPARK's Annexure I also lists employees who were paid but had no tax deducted. They are not in the table
+    // by default (nothing is deposited for them); "+ Add zero-TDS employees" adds them, one row per SPARK entry,
+    // to the group of the month the entry belongs to. A month with no group of its own (no tax that month) uses
+    // the nearest group — the rows add ₹0, so no total changes. A row with no tax is written without a date of
+    // deduction and without a date of deposit (file format fields 27 and 29: "no value if Total Tax Deducted is
+    // zero"), and with its own date of payment (`dop`, from SPARK) when it has one.
+    function noTax(p) {return !(Number(p.tds) > 0);}
+    function monthNo(mk) {const a = String(mk).split('-'); return (+a[0]) * 12 + (+a[1]);}
+    function labelOfMonthKey(mk) {return monthLabel('01/' + String(mk).slice(5) + '/' + String(mk).slice(0, 4)) || String(mk);}
+    // What the button would add right now (nothing is changed here): rows per challan index, and what was left out.
+    function planZeroTaxRows(employees, chs) {
+      const plan = {perChallan: {}, total: 0, noPan: 0, noAmount: 0, noGroup: 0, already: 0, byMonth: {}, moved: {}};
+      const slots = [];
+      (chs || []).forEach((c, ci) => {if (isRealDate(c.tv_date_slash)) slots.push({ci, mk: monthKey(c.tv_date_slash)});});
+      const nearest = mk => {   // same month first (the first such group); else the closest month, the earlier one on a tie
+        let best = null;
+        slots.forEach(s => {
+          const d = Math.abs(monthNo(s.mk) - monthNo(mk));
+          if (!best || d < best.d || (d === best.d && monthNo(s.mk) < monthNo(best.mk))) best = {ci: s.ci, mk: s.mk, d};
+        });
+        return best;
+      };
+      const panless = new Set(), found = {};
+      (employees || []).forEach((emp, ei) => {
+        const pan = String(emp.pan || '').trim().toUpperCase();
+        (emp.entries || []).forEach(en => {
+          if (en.tds > 0) return;                                   // a taxed entry: already a row of its group
+          if (!(en.taxable > 0)) {plan.noAmount++; return;}         // the file format wants an amount paid above 0
+          if (!PAN_RE.test(pan)) {panless.add(ei); return;}         // PAN is mandatory; never guessed
+          const mk = monthKey(en.date_payment), t = nearest(mk);
+          if (!t) {plan.noGroup++; return;}
+          (found[t.ci] = found[t.ci] || []).push({pan, name: sanitizeFreeText(emp.name).toUpperCase(), taxable: en.taxable, tds: 0, dop: en.date_payment, mk, gmk: t.mk});
+        });
+      });
+      plan.noPan = panless.size;
+      Object.keys(found).forEach(ci => {
+        const rows = found[ci].sort((a, b) => a.name.localeCompare(b.name) || a.pan.localeCompare(b.pan));
+        const {fresh, already} = splitNewPensioners(chs[ci].deductees, rows);   // pressing it twice adds nothing twice
+        plan.already += already;
+        if (!fresh.length) return;
+        plan.perChallan[ci] = fresh;
+        plan.total += fresh.length;
+        fresh.forEach(r => {
+          plan.byMonth[r.mk] = (plan.byMonth[r.mk] || 0) + 1;
+          if (r.gmk !== r.mk) plan.moved[r.mk] = r.gmk;
+        });
+      });
+      return plan;
+    }
+    function zeroTaxMessage(plan) {
+      const months = Object.keys(plan.byMonth).sort().map(mk => `${labelOfMonthKey(mk)}: ${plan.byMonth[mk]}`).join(', ');
+      const moved = Object.keys(plan.moved).sort().map(mk => `${labelOfMonthKey(mk)} → ${labelOfMonthKey(plan.moved[mk])} group`).join(', ');
+      return `Added ${plan.total} row${plan.total === 1 ? '' : 's'} with ₹0 TDS (${months}).` +
+        (moved ? ` A month with no group of its own was placed in the nearest one (${moved}); the rows add ₹0, so that total is unchanged.` : '') +
+        (plan.noPan ? ` ${plan.noPan} employee${plan.noPan === 1 ? '' : 's'} left out: no valid PAN in SPARK — add them by hand if needed.` : '') +
+        (plan.noAmount ? ` ${plan.noAmount} entr${plan.noAmount === 1 ? 'y' : 'ies'} left out: amount paid is 0.` : '') +
+        (plan.noGroup ? ` ${plan.noGroup} entr${plan.noGroup === 1 ? 'y' : 'ies'} left out: no group to put ${plan.noGroup === 1 ? 'it' : 'them'} in.` : '') +
+        (plan.already ? ` ${plan.already} already in the table.` : '');
+    }
+    const ZERO_ROWS_CONFIRM_ABOVE = 300; // adding more than this in one go asks first
+
+    // ============================================================
     // GENERATORS  (field maps validated against real RPU output samples)
     // ============================================================
     function buildRow(length, values) {
@@ -1949,12 +2045,16 @@
         }));
         ch.deductees.forEach((p, i) => {
           seq++;
+          // No tax: its own payment date when known, and no date of deduction / deposit (fields 27, 29).
+          const nt = noTax(p);
+          const payDate = nt && p.dop ? ddmmyyyyFromSlash(p.dop) : ch.tv_date_ddmmyyyy;
+          const taxDate = nt ? '' : ch.tv_date_ddmmyyyy;
           lines.push(buildRow(45, {
             0: seq, 1: 'DD', 2: '1', 3: i + 1, 4: challanIdx, 5: 'O',
             7: p.pan, 8: p.name, 14: '1001',
-            17: 'Y', 18: ch.tv_date_ddmmyyyy, 19: fmtAmt(p.taxable),
+            17: 'Y', 18: payDate, 19: fmtAmt(p.taxable),
             23: fmtAmt(p.tds), 24: fmtAmt(p.tds),
-            26: ch.tv_date_ddmmyyyy, 28: ch.tv_date_ddmmyyyy,
+            26: taxDate, 28: taxDate,
           }));
         });
       }
@@ -1996,13 +2096,17 @@
         challanIdx++;
         ch.deductees.forEach((p, i) => {
           seq++;
+          // No tax: its own payment date when known, and no date of deduction (17) / deposit (23).
+          const nt = noTax(p);
+          const payDate = nt && p.dop ? p.dop : ch.tv_date_slash;
+          const taxDate = nt ? '' : ch.tv_date_slash;
           lines.push(buildRow(31, {
             0: '0', 1: seq, 2: 'DD', 3: '1', 4: challanIdx, 5: '--Select--',
             6: ch.receipt_no, 7: ch.tv_date_slash, 8: pad5(ch.ddo_serial), 9: fmtAmt(ch.tv_amount),
             10: i + 1, 12: p.pan, 13: p.name, 14: i + 1, 15: '1001',
-            16: ch.tv_date_slash, 17: ch.tv_date_slash, 18: fmtAmt(p.taxable),
+            16: payDate, 17: taxDate, 18: fmtAmt(p.taxable),
             19: fmtAmt(p.tds), 21: fmtAmt(p.tds),
-            23: ch.tv_date_slash, 24: '--Select--', 26: 'Yes', 30: 'LineHash',
+            23: taxDate, 24: '--Select--', 26: 'Yes', 30: 'LineHash',
           }));
         });
       }
@@ -2076,6 +2180,8 @@
     // payment/credit, date of deduction and date of deposit all take the group's BIN date — the same
     // convention the RPU / FVU output uses for these book-entry (BIN) deductions. Tax is shown as
     // deposited in full (Yes, deposited = deducted); the reason / certificate columns stay empty.
+    // A row with no tax (TDS 0) keeps its own date of payment when it has one (`dop`) and has no date
+    // of deduction and no date of deposit — the file format leaves those empty when the tax is zero.
     function buildOnlineTemplate(challans, section) {
       const rows = [], groups = [];
       let sl = 0;
@@ -2083,19 +2189,22 @@
         if (!ch.deductees.length) return;
         const date = String(ch.tv_date_slash || '').trim();
         const first = sl + 1;
-        let total = 0;
+        let total = 0, zero = 0;
         ch.deductees.forEach(p => {
           sl++;
           total += Number(p.tds) || 0;
+          const nt = noTax(p);
+          if (nt) zero++;
           rows.push({
             sl, pan: String(p.pan || '').trim().toUpperCase(), name: sanitizeFreeText(p.name).toUpperCase(),
             section, date, taxable: Number(p.taxable) || 0, tds: Number(p.tds) || 0, group: groups.length,
+            nt, pay: nt && p.dop ? String(p.dop).trim() : date,
           });
         });
-        groups.push({date, first, last: sl, count: ch.deductees.length, total, receipt: ch.receipt_no || '', ddo: ch.ddo_serial || ''});
+        groups.push({date, first, last: sl, count: ch.deductees.length, total, receipt: ch.receipt_no || '', ddo: ch.ddo_serial || '', zero});
       });
       const csv = ONLINE_TEMPLATE_HEAD + rows.map(r => [
-        r.sl, r.pan, r.name, '', r.section, r.date, r.date, fmtNum(r.taxable), fmtNum(r.tds), 'Yes', fmtNum(r.tds), r.date, '', '',
+        r.sl, r.pan, r.name, '', r.section, r.pay, r.nt ? '' : r.date, fmtNum(r.taxable), fmtNum(r.tds), 'Yes', fmtNum(r.tds), r.nt ? '' : r.date, '', '',
       ].map(csvCell).join(',') + '\r\n').join('');
       return {csv, rows, groups};
     }
@@ -2108,13 +2217,24 @@
       if (rows.length > ONLINE_ROW_LIMIT) {
         w.push(`This return has ${rows.length} deductee records, but TRACES online preparation supports only up to ${ONLINE_ROW_LIMIT}. Use the Offline route (RPU / FVU) for this return.`);
       }
+      // A statement covers one quarter: all dates must sit in one, and in the one SPARK printed.
+      const seen = {};
+      groups.forEach(g => {const p = periodOfSlashDate(g.date); if (p) seen[p.fy + ' ' + p.quarter] = true;});
+      const periods = Object.keys(seen);
+
       const issues = [];
       rows.forEach(r => {
         if (!PAN_RE.test(r.pan)) issues.push(`Sl. ${r.sl}: PAN "${r.pan}" is missing or not in the AAAAA9999A format.`);
         if (!r.name) issues.push(`Sl. ${r.sl}: the name is blank.`);
-        if (!(r.tds > 0)) issues.push(`Sl. ${r.sl}: TDS is ${fmtNum(r.tds)}.`);
+        // A row with TDS 0 is fine when an amount was paid (a zero-TDS employee); with no amount either it is an empty row.
+        if (!(r.tds > 0) && !(r.taxable > 0)) issues.push(`Sl. ${r.sl}: TDS is ${fmtNum(r.tds)}.`);
         if (!(r.taxable > 0)) issues.push(`Sl. ${r.sl}: the amount paid or credited is ${fmtNum(r.taxable)}.`);
         else if (r.tds > r.taxable) issues.push(`Sl. ${r.sl}: TDS (${fmtNum(r.tds)}) is more than the amount paid (${fmtNum(r.taxable)}).`);
+        if (r.nt && r.pay !== r.date) {   // a row with no tax keeps its own date of payment
+          const pp = periodOfSlashDate(r.pay);
+          if (!isRealDate(r.pay)) issues.push(`Sl. ${r.sl}: the date of payment "${r.pay}" is not a valid DD/MM/YYYY date.`);
+          else if (pp && periods.length === 1 && pp.fy + ' ' + pp.quarter !== periods[0]) issues.push(`Sl. ${r.sl}: the date of payment ${r.pay} is outside ${periods[0]}, the quarter of the BIN dates.`);
+        }
       });
       groups.forEach(g => {
         if (!isRealDate(g.date)) issues.push(`Sl. ${g.first}–${g.last}: the BIN date "${g.date}" is not a valid DD/MM/YYYY date.`);
@@ -2122,10 +2242,6 @@
       issues.slice(0, 8).forEach(m => w.push(m));
       if (issues.length > 8) w.push(`…and ${issues.length - 8} more like these.`);
 
-      // A statement covers one quarter: all dates must sit in one, and in the one SPARK printed.
-      const seen = {};
-      groups.forEach(g => {const p = periodOfSlashDate(g.date); if (p) seen[p.fy + ' ' + p.quarter] = true;});
-      const periods = Object.keys(seen);
       if (periods.length > 1) {
         w.push(`The BIN dates fall in more than one quarter (${periods.join(', ')}) — one statement covers a single quarter, so check the dates.`);
       } else if (periods.length === 1 && sparkPeriod) {
@@ -2143,7 +2259,7 @@
     }
     // What the rows looked like when the template was made — if they change afterwards the download is held back.
     function onlineSignature() {
-      return JSON.stringify([el('o_section').value, (challans || []).map(c => [c.tv_date_slash, c.deductees.map(p => [p.pan, p.name, p.taxable, p.tds])])]);
+      return JSON.stringify([el('o_section').value, (challans || []).map(c => [c.tv_date_slash, c.deductees.map(p => [p.pan, p.name, p.taxable, p.tds, p.dop || ''])])]);
     }
 
     function renderOnlinePanel(built, warnings, fileName, section) {
@@ -2152,7 +2268,9 @@
       el('onlineWarnings').innerHTML = warnings.length
         ? '<div class="warn-box"><b>Check before uploading:</b><br>' + warnings.map(m => '• ' + escHtml(m)).join('<br>') + '</div>'
         : '';
-      el('onlineSummary').innerHTML = `✓ Template ready — <b>${rows.length}</b> deductee record${rows.length === 1 ? '' : 's'} in ${groups.length} BIN group${groups.length === 1 ? '' : 's'} · Section ${escHtml(section)} · total TDS ₹${fmtAmt(total)}`;
+      const zeroRows = rows.filter(r => r.nt).length;
+      el('onlineSummary').innerHTML = `✓ Template ready — <b>${rows.length}</b> deductee record${rows.length === 1 ? '' : 's'} in ${groups.length} BIN group${groups.length === 1 ? '' : 's'} · Section ${escHtml(section)} · total TDS ₹${fmtAmt(total)}` +
+        (zeroRows ? ` · ${zeroRows} with ₹0 TDS` : '');
       el('fnameOnline').textContent = fileName;
 
       const fy = el('f_fy_hyphen').value.trim(), q = el('f_quarter').value.trim();
@@ -2165,7 +2283,8 @@
       el('mapGuide').innerHTML = '<table class="recon guide"><tr><th>Sl. No.</th><th>BIN date</th><th>BIN</th><th>Rows</th><th>TDS total ₹</th></tr>' +
         groups.map(g => `<tr><td class="num">${g.first === g.last ? g.first : g.first + '–' + g.last}</td><td class="num">${escHtml(g.date)}</td>` +
           `<td>${g.receipt ? escHtml(g.receipt) + (g.ddo ? ' · DDO ' + escHtml(g.ddo) : '') : '<span class="hint">as shown on TRACES</span>'}</td>` +
-          `<td>${g.count}</td><td class="num">${fmtAmt(g.total)}</td></tr>`).join('') + '</table>';
+          `<td>${g.count}${g.zero ? ` <span class="hint">(${g.zero} × ₹0)</span>` : ''}</td><td class="num">${fmtAmt(g.total)}</td></tr>`).join('') + '</table>' +
+        (zeroRows ? '<p class="hint" style="margin:6px 0 0;">₹0 TDS വരികൾ (ബ്രാക്കറ്റിൽ കാണിച്ചത്) ആ BIN-ന്റെ Sl. No. പരിധിയിൽ തന്നെയാണ്; അവ ടിക് ചെയ്താലും Difference (B−C) മാറില്ല.</p>' : '');
     }
 
     // Row counter, the "BIN date is a guess" note, the template button, and the stale-download guard.
@@ -2558,6 +2677,8 @@
         tableTouched = false; // freshly built — nothing of the user's is in it yet
         // The rebuilt table has none of the rows that were imported into the old one, so drop those notes too.
         Object.keys(pensionImportMsg).forEach(k => {delete pensionImportMsg[k];});
+        Object.keys(pensionZeroOpt).forEach(k => {delete pensionZeroOpt[k];});
+        zeroTaxMsg = '';
         if (binEntries.length === 0 && challans.length && !reconWarnings.length) reconOkHtml = builtNoteHtml();
         renderChallanTable();
       }
@@ -2659,6 +2780,8 @@
     }
 
     const pensionImportMsg = {}; // {challanIndex: statusText}, survives renderChallanTable() redraws
+    const pensionZeroOpt = {};   // {challanIndex: true} — "also add pensioners with no tax" is ticked for that challan's import
+    let zeroTaxMsg = '';         // what the last "+ Add zero-TDS employees" press did (shown under the button)
     function renderChallanTable() {
       const tblWrap = el('reconTables');
       tblWrap.innerHTML = '';
@@ -2693,7 +2816,7 @@
       <table class="recon">
         <tr><th>PAN</th><th>Name</th><th>Taxable amount</th><th>TDS</th><th></th></tr>
         ${ch.deductees.map((p, pi) => `
-          <tr>
+          <tr${noTax(p) && Number(p.taxable) > 0 ? ` class="zero-row" title="No tax deducted — goes out without a date of deduction or deposit${p.dop ? ' · paid ' + p.dop : ''}"` : ''}>
             <td><input data-ch="${ci}" data-p="${pi}" data-f="pan" value="${p.pan}"></td>
             <td><input data-ch="${ci}" data-p="${pi}" data-f="name" value="${p.name}"></td>
             <td><input data-ch="${ci}" data-p="${pi}" data-f="taxable" value="${fmtAmt(p.taxable)}"></td>
@@ -2713,7 +2836,8 @@
       <details class="howto"${pensionImportMsg[ci] ? ' open' : ''}>
         <summary>Import from Treasury Pension CSV</summary>
         <div class="howto-body">
-          Adds every pensioner with TDS &gt; 0 from that month's statement as a deductee here (PAN, name, gross amount, TDS). Rows with no tax or no valid PAN on file are left out — add those by hand if needed. Safe to repeat: rows already in this challan are not added twice.
+          Adds every pensioner with TDS &gt; 0 from that month's statement as a deductee here (PAN, name, gross amount, TDS). Rows with no valid PAN on file are left out — add those by hand if needed. Rows with no tax are left out too, unless you tick the box below. Safe to repeat: rows already in this challan are not added twice.
+          <label style="display:block; margin:8px 0 0;"><input type="checkbox" class="pension-zero-opt" data-ch="${ci}"${pensionZeroOpt[ci] ? ' checked' : ''}> Also add pensioners with no tax (TDS 0) — only those with a valid PAN and an amount above 0</label>
           <div class="small-btn-row" style="margin:8px 0 0;">
             <input type="file" class="pension-csv-input" data-ch="${ci}" accept=".csv">
           </div>
@@ -2763,12 +2887,15 @@
             const emp = sparkData.employees[parseInt(sel.value)];
             const mk = monthKey(ch.tv_date_slash);
             const entry = emp.entries.find(e => monthKey(e.date_payment) === mk);
-            ch.deductees.push({
+            const row = {
               pan: emp.pan,
               name: sanitizeFreeText(emp.name).toUpperCase(),
               taxable: entry ? entry.taxable : 0,
               tds: entry ? entry.tds : 0,
-            });
+            };
+            // An employee SPARK shows with no tax that month: a zero-TDS row, with its own payment date.
+            if (entry && !(entry.tds > 0) && entry.taxable > 0) row.dop = entry.date_payment;
+            ch.deductees.push(row);
           }
           renderChallanTable();
         });
@@ -2780,6 +2907,9 @@
           renderChallanTable();
         });
       });
+      tblWrap.querySelectorAll('.pension-zero-opt').forEach(cb => {
+        cb.addEventListener('change', () => {pensionZeroOpt[cb.dataset.ch] = cb.checked;});
+      });
       tblWrap.querySelectorAll('.pension-csv-input').forEach(inp => {
         inp.addEventListener('change', async () => {
           const ci = inp.dataset.ch;
@@ -2788,7 +2918,8 @@
           tableTouched = true;
           try {
             const text = await file.text();
-            const {deductees, skipped} = parsePensionCSV(text);
+            const includeZero = !!pensionZeroOpt[ci];
+            const {deductees, skipped, zeros, zeroSkipped} = parsePensionCSV(text, {includeZero});
             if (!deductees.length) {
               pensionImportMsg[ci] = 'No rows with TDS > 0 found in this file.';
             } else {
@@ -2800,6 +2931,19 @@
                 (fresh.length && already ? ` (${already} already here, left out.)` : '') +
                 (skipped ? ` (${skipped} skipped — missing/invalid PAN; add those by hand if needed.)` : '');
             }
+            if (includeZero) {
+              // The pensioners with no tax, on request: a valid PAN and an amount above 0, none twice, and a question first when it is a lot.
+              const z = splitNewPensioners(challans[ci].deductees, zeros);
+              const go = z.fresh.length <= ZERO_ROWS_CONFIRM_ABOVE || window.confirm(`This adds ${z.fresh.length} pensioners with no tax (TDS 0) to this challan. Continue?`);
+              if (go) challans[ci].deductees.push(...z.fresh);
+              let zmsg;
+              if (!zeros.length) zmsg = ' No pensioners with no tax (valid PAN, amount above 0) found in this file.';
+              else if (!go) zmsg = ' The pensioners with no tax were not added.';
+              else if (z.fresh.length) zmsg = ` Also added ${z.fresh.length} pensioner(s) with no tax (TDS 0).` + (z.already ? ` (${z.already} already here, left out.)` : '');
+              else zmsg = ` Nothing new among the pensioners with no tax — all ${z.already} are already in this challan.`;
+              if (zeroSkipped) zmsg += ` (${zeroSkipped} with no tax skipped — missing/invalid PAN.)`;
+              pensionImportMsg[ci] += zmsg;
+            }
           } catch (err) {
             pensionImportMsg[ci] = 'Could not read this file — ' + err.message;
           }
@@ -2810,7 +2954,43 @@
       renderReconBox();
       el('btnGenerate').disabled = challans.length === 0;
       updateOnlineUi();
+      refreshZeroTaxControl();
     }
+
+    // "+ Add zero-TDS employees": offered once a SPARK file with employees has been read; its label shows how
+    // many rows it would add right now, and it is off when there is nothing (left) to add.
+    function refreshZeroTaxControl() {
+      const wrap = el('zeroTaxRow'), btn = el('btnAddZeroTax'), status = el('zeroTaxStatus');
+      const has = !!(challans && sparkData && sparkData.employees && sparkData.employees.length);
+      wrap.style.display = has ? '' : 'none';
+      if (!has) return;
+      const plan = planZeroTaxRows(sparkData.employees, challans);
+      btn.disabled = plan.total === 0;
+      btn.textContent = plan.total ? `+ Add zero-TDS employees (${plan.total})` : '+ Add zero-TDS employees';
+      btn.title = plan.total ? '' : (plan.already ? 'All of them are already in the table.'
+        : plan.noGroup ? 'Add a challan first — there is no group to put them in.'
+        : 'Nothing to add: SPARK shows no employee with TDS 0, a valid PAN and an amount paid.');
+      // Online takes up to 200 records: say so, with the live row count, once the button has been used.
+      const rowsNow = challans.reduce((s, c) => s + c.deductees.length, 0);
+      const overLimit = currentMode === 'online' && rowsNow > ONLINE_ROW_LIMIT;
+      status.textContent = zeroTaxMsg && overLimit
+        ? `${zeroTaxMsg} The table now has ${rowsNow} rows, but TRACES online preparation takes up to ${ONLINE_ROW_LIMIT} — use the Offline route for this return.`
+        : zeroTaxMsg;
+      status.style.display = zeroTaxMsg ? '' : 'none';
+    }
+
+    el('btnAddZeroTax').addEventListener('click', () => {
+      if (!challans || !sparkData) return;
+      const plan = planZeroTaxRows(sparkData.employees, challans);
+      if (!plan.total) return;
+      if (plan.total > ZERO_ROWS_CONFIRM_ABOVE && !window.confirm(`This adds ${plan.total} rows with ₹0 TDS to the table. Continue?`)) return;
+      Object.keys(plan.perChallan).forEach(ci => {
+        plan.perChallan[ci].forEach(r => challans[ci].deductees.push({pan: r.pan, name: r.name, taxable: r.taxable, tds: 0, dop: r.dop}));
+      });
+      zeroTaxMsg = zeroTaxMessage(plan);
+      tableTouched = true;
+      renderChallanTable();
+    });
 
     el('btnGenerate').addEventListener('click', () => {
       const d = readDeductorForm();
