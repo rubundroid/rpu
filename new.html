@@ -1277,13 +1277,173 @@
     // ============================================================
     // SPARK PDF PARSER
     // ============================================================
+    // Annexure I wraps a PAN or a name that is wider than its cell onto a second
+    // line, ~10pt under the row. That line lies only ~4pt above the NEXT entry row,
+    // and the Y clustering in extractLayoutText fused the two: the entry row then no
+    // longer began with a date (that month's entry — and its TDS — was dropped) and
+    // the name stayed cut short. foldWrappedCells puts such fragments back onto their
+    // own row BEFORE lines are built. It acts only on pages that have Annexure I entry
+    // rows, only where a fragment really sits under a row, and leaves all else as is.
+    const TIMES_W = [250,333,408,500,500,833,778,180,333,333,500,564,250,333,250,278,   // Times-Roman advance widths (1/1000 em), ASCII 32-126:
+      500,500,500,500,500,500,500,500,500,500, 278,278,564,564,564,444,921,             // the font SPARK's iText report is set in
+      722,667,667,722,611,556,722,722,333,389,722,611,889,722,722,556,722,667,556,611,722,722,944,722,722,611,
+      333,278,333,469,500,333,
+      444,500,444,500,444,333,500,500,278,278,500,278,778,500,500,500,500,333,389,278,500,500,722,500,500,444,
+      480,200,480,541];
+    function timesWidth(s, size) {
+      let t = 0;
+      for (const ch of s) {
+        const c = ch.charCodeAt(0);
+        if (c < 32 || c > 126) return NaN;
+        t += TIMES_W[c - 32];
+      }
+      return t * size / 1000;
+    }
+    // How the next line of a wrapped name attaches to the one before it. iText breaks
+    // at a space whenever the line has one, and inside a word only when the line is a
+    // single word that cannot take its next character — so a line that has a space, or
+    // that could still have held the next character, ends at a real word break. What is
+    // left (a nearly full single word) looks the same either way; there a 1-3 letter
+    // fragment with a vowel is read as the tail of that word and anything else as a new
+    // word. Those two guesses are reported (guess:true) so the user can check them.
+    function joinWrapped(prev, prevW, next, cellW, fs) {
+      if (/\s/.test(prev)) return {sep: ' '};
+      if (/-$/.test(prev)) return {sep: ''};
+      const known = Math.abs(timesWidth(prev, fs) - prevW) <= prevW * 0.03 + 0.5;   // is it really Times at this size?
+      const cw = known ? timesWidth(next.charAt(0), fs) : NaN;
+      if (isFinite(cw) && prevW + cw <= cellW + 0.05) return {sep: ' '};
+      const tok = next.split(/\s+/)[0];
+      if (tok.length === 1 || (tok.length <= 3 && !/[AEIOU]/i.test(tok))) return {sep: ' '};   // an initial
+      return tok.length <= 3 ? {sep: '', guess: true} : {sep: ' ', guess: true};
+    }
+    // Geometry of the Annexure I table, judged once over the whole report: the
+    // entry-date column, the serial-number column and the name column.
+    function annexBump(o, x) {const k = x.toFixed(1); o[k] = (o[k] || 0) + 1;}
+    function annexMode(o) {const k = Object.keys(o).sort((a, b) => o[b] - o[a])[0]; return k === undefined ? NaN : parseFloat(k);}
+    function annexBlank(it) {return it.text.trim() === '';}
+    function annexRow(items, y, leftCut) {
+      return items.filter(it => Math.abs(it.y - y) <= 0.6 && it.x < leftCut && !annexBlank(it)).sort((a, b) => a.x - b.x);
+    }
+    // Rows that open a deductee = a serial number in the serial column on a row that
+    // carries an entry ("dd/mm/yyyy <amount>", normally its own text item, but it can
+    // also come out glued to the end of the name).
+    function annexStarts(items, dateX, serialX) {
+      const leftCut = dateX - 2, out = [];
+      items.forEach(it => {
+        if (annexBlank(it) || !/^\d{1,6}$/.test(it.text.trim()) || Math.abs(it.x - serialX) >= 1) return;
+        const hasEntry = items.some(e => Math.abs(e.y - it.y) <= 0.6 &&
+          ((/^\s*\d{2}\/\d{2}\/\d{4}\s+\d/.test(e.text) && Math.abs(e.x - dateX) < 1.5) || (e.x < leftCut && /\s\d{2}\/\d{2}\/\d{4}\s+\d/.test(e.text))));
+        if (hasEntry) out.push({y: it.y, left: annexRow(items, it.y, leftCut)});
+      });
+      return out.sort((a, b) => a.y - b.y);
+    }
+    function annexureColumns(pages) {
+      const ENTRY = /^\s*\d{2}\/\d{2}\/\d{4}\s+\d/;
+      const dt = {};
+      pages.forEach(items => items.forEach(it => {if (ENTRY.test(it.text)) annexBump(dt, it.x);}));
+      const dateX = annexMode(dt);
+      if (isNaN(dateX)) return null;
+      const sx = {};
+      pages.forEach(items => items.forEach(e => {
+        if (!ENTRY.test(e.text) || Math.abs(e.x - dateX) >= 1.5) return;
+        const left = annexRow(items, e.y, dateX - 2);
+        if (left.length >= 2 && /^\d+$/.test(left[0].text.trim())) annexBump(sx, left[0].x);
+      }));
+      const serialX = annexMode(sx);
+      if (isNaN(serialX)) return null;
+      // Name column: where the last cell before the date starts on most opening rows
+      // (a PAN, or a PAN with the name run on behind it, does not count).
+      const nx = {};
+      pages.forEach(items => annexStarts(items, dateX, serialX).forEach(s => {
+        const last = s.left[s.left.length - 1], t = last.text.trim();
+        if (s.left.length >= 2 && !/^\d+$/.test(t) && !/^[A-Z]{5}\s?\d/.test(t)) annexBump(nx, last.x);
+      }));
+      const nameX = annexMode(nx);
+      if (isNaN(nameX)) return null;
+      const cellW = dateX - nameX - 4;                   // iText cell padding: 2pt either side
+      return cellW > 20 && cellW < 400 ? {dateX, serialX, nameX, cellW} : null;
+    }
+    function foldWrappedCells(items, geo, info) {
+      const {dateX, serialX, nameX, cellW} = geo;
+      const leftCut = dateX - 2;                         // left of this: serial, emp no, PAN, name
+      const starts = annexStarts(items, dateX, serialX);
+      if (!starts.length) return items;
+      const verif = items.filter(it => /^\s*Verification/i.test(it.text) && it.y > starts[0].y).map(it => it.y);
+      const endY = verif.length ? Math.min(...verif) - 0.5 : Infinity;
+      // Any serial number in the serial column ends the block above it, whether or not its own row was recognised.
+      const serialYs = items.filter(it => !annexBlank(it) && /^\d{1,6}$/.test(it.text.trim()) && Math.abs(it.x - serialX) < 1).map(it => it.y).sort((a, b) => a - b);
+
+      const drop = new Set();
+      starts.forEach(s => {
+        const nextY = serialYs.find(y => y > s.y + 0.6);
+        const hiY = Math.min(nextY === undefined ? Infinity : nextY - 0.6, endY, s.y + 50);
+        const zone = items.filter(it => it.y > s.y + 0.6 && it.y < hiY && it.x < leftCut);
+        // never pick up anything that is itself an entry, or the page footer
+        const frags = zone.filter(it => !annexBlank(it) && !/^\s*SparkCode/i.test(it.text) && !/\d{2}\/\d{2}\/\d{4}/.test(it.text));
+        if (!frags.length) return;
+        const lineYs = [];
+        // Name: the continuation lines sit exactly under the name cell.
+        const nameF = frags.filter(f => Math.abs(f.x - nameX) < 1).sort((a, b) => a.y - b.y);
+        if (nameF.length) {
+          // The first-line item: the name cell itself, or an item that also holds the PAN in front
+          // ("ABCDE1234F SOME NAME" — the PAN may be a cut-short one) and/or the entry behind
+          // ("SOME NAME 01/07/2026 18765").
+          const exact = s.left.find(it => Math.abs(it.x - nameX) < 1);
+          const tgt = exact || s.left.find(it => it.x < nameX - 1 && it.x + it.w > nameX + 1);
+          const m = tgt && tgt.text.match(exact
+            ? /^()([\s\S]*?)(?:\s+(\d{2}\/\d{2}\/\d{4}\s+\d[\s\S]*))?$/
+            : /^((?:[A-Z]{5}\s?\d{0,4}\s?[A-Z]?|PANNOTAVB)\s+)([\s\S]*?)(?:\s+(\d{2}\/\d{2}\/\d{4}\s+\d[\s\S]*))?$/);
+          if (m) {
+            const pre = m[1], post = m[3] ? ' ' + m[3] : '';
+            let text = m[2].trim(), prev = text, prevW = post ? NaN : tgt.x + tgt.w - nameX;   // width of the first line, if it can be told
+            for (const f of nameF) {
+              const next = f.text.trim();
+              const j = joinWrapped(prev, prevW, next, cellW, tgt.fs);
+              text += j.sep + next;
+              if (j.guess && info && info.guessed) info.guessed.push(s.left[0].text.trim());
+              prev = next; prevW = f.w;
+              drop.add(f); lineYs.push(f.y);
+            }
+            tgt.len = tgt.text.length;
+            tgt.text = pre + text + post;
+          }
+        }
+        // PAN: the tail of a PAN that did not fit is on the next line, in the same column. The first
+        // line is a PAN cut short (PANNOTAVB = SPARK's PANNOTAVBL, one letter too wide), alone or
+        // with the name run on behind it.
+        const pTails = frags.filter(f => !drop.has(f) && f.x < nameX - 1 && /^[A-Z0-9\s]+$/.test(f.text)).sort((a, b) => a.y - b.y);
+        if (pTails.length) {
+          const PFRAG = /^([A-Z]{5}\s?\d{0,4}\s?[A-Z]?|PANNOTAVB)(?:\s+(\S[\s\S]*))?$/;
+          for (const it of s.left) {
+            const m = it.x < nameX - 1 && it.text.trim().match(PFRAG);
+            if (!m || m[1].replace(/\s+/g, '').length >= 10) continue;
+            const mine = pTails.filter(f => Math.abs(f.x - it.x) < 1);
+            if (!mine.length) continue;
+            it.len = it.text.length;
+            it.text = m[1].trim() + mine.map(f => f.text.trim()).join('') + (m[2] ? ' ' + m[2] : '');
+            mine.forEach(f => {drop.add(f); lineYs.push(f.y);});
+            break;
+          }
+        }
+        // The empty spacer items that filled the rest of those lines go with them.
+        zone.forEach(it => {if (annexBlank(it) && lineYs.some(y => Math.abs(it.y - y) <= 0.6)) drop.add(it);});
+        // Anything else left in that space is not understood — but it must not sit 4pt above the
+        // next entry row, where it would be fused into it again. Give it a line of its own.
+        frags.forEach(f => {if (!drop.has(f)) f.y = s.y + 7;});
+      });
+      return drop.size ? items.filter(it => !drop.has(it)) : items;
+    }
+
     // Reconstructs a pdftotext-layout-like text blob (line-grouped by Y,
     // words ordered by X within each line) so the same label-anchored
     // patterns that were validated against real pdftotext output can run
-    // unchanged here.
-    async function extractLayoutText(buf) {
+    // unchanged here. `info` (optional) collects notes for the caller:
+    // info.guessed = Sl. Nos. whose wrapped name had to be joined by a guess.
+    async function extractLayoutText(buf, info) {
       const pdf = await pdfjsLib.getDocument({data: buf}).promise;
       let fullText = "";
+      // Every page is read first, so the Annexure I columns can be judged over the whole report.
+      const pages = [];
       for (let p = 1; p <= pdf.numPages; p++) {
         const page = await pdf.getPage(p);
         const viewport = page.getViewport({scale: 1});
@@ -1291,13 +1451,18 @@
         // See the note in parseBinPDFBuffer above: combine with the viewport
         // transform so rotated pages (this SPARK PDF is rotated 90°) still
         // yield correctly-oriented top-down x/y.
-        const items = content.items
+        pages.push(content.items
           .filter(it => it.str !== undefined)
           .map(it => {
             const tx = pdfjsLib.Util.transform(viewport.transform, it.transform);
-            return {text: it.str, x: tx[4], y: tx[5]};
-          });
+            return {text: it.str, x: tx[4], y: tx[5], w: it.width, fs: Math.hypot(tx[0], tx[1])};
+          }));
+      }
+      const geo = annexureColumns(pages);
+      for (const pageItems of pages) {
+        let items = pageItems;
         if (items.length === 0) {fullText += "\n\f\n"; continue;}
+        if (geo) items = foldWrappedCells(items, geo, info);   // wrapped PAN / name cells back onto their own row
 
         const yVals = [...new Set(items.map(it => Math.round(it.y * 10) / 10))].sort((a, b) => a - b);
         const LINE_GAP = 4.0;
@@ -1326,7 +1491,7 @@
               lineStr += gap > 1.5 ? " " : "";
             }
             lineStr += it.text;
-            lastEnd = it.x + (it.text.length * 4.5); // rough width estimate for spacing decisions
+            lastEnd = it.x + ((it.len !== undefined ? it.len : it.text.length) * 4.5); // rough width estimate for spacing decisions (len: length before a wrapped cell was folded in)
           }
           pageText += lineStr + "\n";
         }
@@ -1421,6 +1586,11 @@
       const DATE_RE = "\\d{2}/\\d{2}/\\d{4}";
       const newEmpRe = new RegExp(`^\\s*(\\d+)\\s+(\\d+)\\s+(${PAN_RE})\\s+(.+?)\\s+(${DATE_RE})\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)`);
       const contRe = new RegExp(`^\\s*(${DATE_RE})\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)`);
+      // A deductee row whose PAN the strict pattern cannot read — blank, printed with
+      // spaces ("ABCDE 1234F"), or malformed — still opens a NEW deductee. Without this
+      // its entries were credited to the previous person on the list.
+      const looseEmpRe = new RegExp(`^\\s*(\\d+)\\s+(?:(\\d+)\\s+)?(.*?)\\s*(${DATE_RE})\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)`);
+      const panOnlyRe = new RegExp(`^${PAN_RE}$`);
 
       const employees = [];
       let current = null;
@@ -1430,8 +1600,33 @@
         let m = line.match(newEmpRe);
         if (m) {
           current = {
-            pan: m[3], name: m[4].trim(),
+            sl: m[1], pan: m[3], name: m[4].trim(),
             entries: [{date_payment: m[5], taxable: parseFloat(m[6]), tds: parseFloat(m[7])}]
+          };
+          employees.push(current);
+          continue;
+        }
+        m = line.match(looseEmpRe);
+        if (m) {
+          // What sits between the numbers and the date is "<PAN> <name>", the PAN possibly
+          // printed with stray spaces ("ABCDE 1234F") — take as many leading words as
+          // make up a PAN once the spaces are gone. SPARK's own stand-ins (PANNOTAVBL,
+          // PANAPPLIED, PANINVALID) are the PAN too, and so is a PAN-looking word
+          // (letters+digits, wrong shape) so that it gets flagged; otherwise no PAN.
+          const mid = m[3].trim();
+          let pan = '', name = mid, pm;
+          const toks = mid.split(/\s+/);
+          let acc = '', k = -1;
+          for (let t = 0; t < toks.length && t < 6 && acc.length <= 10; t++) {
+            acc += toks[t];
+            if (panOnlyRe.test(acc)) {k = t; break;}
+          }
+          if (k >= 0) {pan = acc; name = toks.slice(k + 1).join(' ');}
+          else if ((pm = mid.match(/^(PANNOTAVBL|PANAPPLIED|PANINVALID)(?:\s+(.*))?$/))) {pan = pm[1]; name = (pm[2] || '').trim();}
+          else if ((pm = mid.match(/^(?=[A-Z0-9]*\d)([A-Z0-9]{6,12})(?:\s+(.*))?$/i))) {pan = pm[1].toUpperCase(); name = (pm[2] || '').trim();}
+          current = {
+            sl: m[1], pan, name,
+            entries: [{date_payment: m[4], taxable: parseFloat(m[5]), tds: parseFloat(m[6])}]
           };
           employees.push(current);
           continue;
@@ -2161,14 +2356,19 @@
       setStatus('sparkStatus', 'Reading…');
       try {
         const buf = await file.arrayBuffer();
-        const layoutText = await extractLayoutText(buf);
+        const layoutInfo = {guessed: []};
+        const layoutText = await extractLayoutText(buf, layoutInfo);
         sparkData = parseSparkText(layoutText);
         // Some SPARK reports print the whole header blank (no TAN, PAN, year,
         // names) — fine as long as the Annexure I rows are there; the TAN etc.
         // then come from a previous-quarter file or are typed in (step 3).
         const sd = sparkData.deductor;
         if (!sparkData.employees.length) throw new Error(sd.tan ? 'Could not find Annexure I deductee rows in this PDF.' : 'Could not find a TAN or Annexure I deductee rows in this PDF — is it the right file?');
+        // A long name the PDF printed over two lines is joined back together; where the
+        // join point was a judgement call (see joinWrapped), say which rows to check.
+        const guessed = [...new Set(layoutInfo.guessed)];
         setStatus('sparkStatus', `Read ${sparkData.employees.length} employees${sd.tan ? ' for TAN ' + sd.tan : ''}${sd.fy_hyphen ? ', ' + sd.fy_hyphen : ''}${sd.quarter ? ' ' + sd.quarter : ''}.` +
+          (guessed.length ? ` The PDF printed a long name over two lines for Sl. ${guessed.join(', ')} — joined automatically; please check ${guessed.length > 1 ? 'those names' : 'that name'} in the deductee table.` : '') +
           (sd.tan || currentMode === 'online' ? '' : " This SPARK report has no TAN in its header — fill it in step 3 (or load a previous quarter's RPU file there)."), 'ok');
         fillDeductorForm(sparkData.deductor);
         enableStep(3);
@@ -2506,7 +2706,7 @@
           <option value="">+ Add deductee</option>
           <option value="__blank__">— blank row (type in manually) —</option>
           ${(sparkData && sparkData.employees && sparkData.employees.length)
-            ? sparkData.employees.map((emp, ei) => `<option value="${ei}">${emp.pan} — ${sanitizeFreeText(emp.name).toUpperCase()}</option>`).join('')
+            ? sparkData.employees.map((emp, ei) => `<option value="${ei}">${emp.pan || '(no PAN)'} — ${sanitizeFreeText(emp.name).toUpperCase()}</option>`).join('')
             : ''}
         </select>
       </div>
